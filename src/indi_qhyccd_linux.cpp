@@ -3,8 +3,6 @@
 
 #include "indi_qhyccd_linux.h"
 
-//#include "simpleccd.h"
-
 const int POLLMS           = 500;       /* Polling interval 500 ms */
 const int MAX_CCD_TEMP     = 45;		/* Max CCD temperature */
 const int MIN_CCD_TEMP	   = -55;		/* Min CCD temperature */
@@ -13,7 +11,7 @@ const float TEMP_THRESHOLD = .25;		/* Differential temperature threshold (C)*/
 /* Macro shortcut to CCD temperature value */
 #define currentCCDTemperature   TemperatureN[0].value
 
-std::auto_ptr<SimpleCCD> simpleCCD(0);
+std::auto_ptr<QHYCCD> _QHYCCD(0);
 
 void ISInit()
 {
@@ -22,34 +20,42 @@ void ISInit()
         return;
 
      isInit = 1;
-     if(simpleCCD.get() == 0) simpleCCD.reset(new SimpleCCD());
+     if(_QHYCCD.get() == 0) _QHYCCD.reset(new QHYCCD());
 }
 
 void ISGetProperties(const char *dev)
 {
          ISInit();
-         simpleCCD->ISGetProperties(dev);
+         _QHYCCD->ISGetProperties(dev);
 }
 
 void ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int num)
 {
          ISInit();
-         simpleCCD->ISNewSwitch(dev, name, states, names, num);
+         _QHYCCD->ISNewSwitch(dev, name, states, names, num);
 }
 
 void ISNewText(	const char *dev, const char *name, char *texts[], char *names[], int num)
 {
          ISInit();
-         simpleCCD->ISNewText(dev, name, texts, names, num);
+         _QHYCCD->ISNewText(dev, name, texts, names, num);
 }
 
 void ISNewNumber(const char *dev, const char *name, double values[], char *names[], int num)
 {
          ISInit();
-         simpleCCD->ISNewNumber(dev, name, values, names, num);
+         _QHYCCD->ISNewNumber(dev, name, values, names, num);
 }
 
-void ISNewBLOB (const char *dev, const char *name, int sizes[], int blobsizes[], char *blobs[], char *formats[], char *names[], int n)
+void ISNewBLOB (
+		const char *dev,
+		const char *name,
+		int sizes[],
+		int blobsizes[],
+		char *blobs[],
+		char *formats[],
+		char *names[],
+		int n)
 {
    INDI_UNUSED(dev);
    INDI_UNUSED(name);
@@ -64,11 +70,11 @@ void ISNewBLOB (const char *dev, const char *name, int sizes[], int blobsizes[],
 void ISSnoopDevice (XMLEle *root)
 {
      ISInit();
-     simpleCCD->ISSnoopDevice(root);
+     _QHYCCD->ISSnoopDevice(root);
 }
 
 
-SimpleCCD::SimpleCCD()
+QHYCCD::QHYCCD()
 {
     InExposure = false;
 }
@@ -76,9 +82,9 @@ SimpleCCD::SimpleCCD()
 /**************************************************************************************
 ** Client is asking us to establish connection to the device
 ***************************************************************************************/
-bool SimpleCCD::Connect()
+bool QHYCCD::Connect()
 {
-    IDMessage(getDeviceName(), "Simple CCD connected successfully!");
+    IDMessage(getDeviceName(), "QHYCCD connected successfully!");
 
     // Let's set a timer that checks teleCCDs status every POLLMS milliseconds.
     SetTimer(POLLMS);
@@ -89,24 +95,24 @@ bool SimpleCCD::Connect()
 /**************************************************************************************
 ** Client is asking us to terminate connection to the device
 ***************************************************************************************/
-bool SimpleCCD::Disconnect()
+bool QHYCCD::Disconnect()
 {
-    IDMessage(getDeviceName(), "Simple CCD disconnected successfully!");
+    IDMessage(getDeviceName(), "QHYCCD disconnected successfully!");
     return true;
 }
 
 /**************************************************************************************
 ** INDI is asking us for our default device name
 ***************************************************************************************/
-const char * SimpleCCD::getDefaultName()
+const char * QHYCCD::getDefaultName()
 {
-    return "Simple CCD";
+    return "QHYCCD_Linux";
 }
 
 /**************************************************************************************
 ** INDI is asking us to init our properties.
 ***************************************************************************************/
-bool SimpleCCD::initProperties()
+bool QHYCCD::initProperties()
 {
     // Must init parent properties first!
     INDI::CCD::initProperties();
@@ -134,7 +140,7 @@ bool SimpleCCD::initProperties()
 /**************************************************************************************
 ** INDI is asking us to submit list of properties for the device
 ***************************************************************************************/
-void SimpleCCD::ISGetProperties(const char *dev)
+void QHYCCD::ISGetProperties(const char *dev)
 {
     INDI::CCD::ISGetProperties(dev);
 
@@ -151,7 +157,7 @@ void SimpleCCD::ISGetProperties(const char *dev)
 ** INDI is asking us to update the properties because there is a change in CONNECTION status
 ** This fucntion is called whenever the device is connected or disconnected.
 *********************************************************************************************/
-bool SimpleCCD::updateProperties()
+bool QHYCCD::updateProperties()
 {
     // Call parent update properties first
     INDI::CCD::updateProperties();
@@ -171,7 +177,7 @@ bool SimpleCCD::updateProperties()
 /**************************************************************************************
 ** Setting up CCD parameters
 ***************************************************************************************/
-void SimpleCCD::setupParams()
+void QHYCCD::setupParams()
 {
     // Our CCD is an 8 bit CCD, 1280x1024 resolution, with 5.4um square pixels.
     SetCCDParams(1280, 1024, 8, 5.4, 5.4);
@@ -186,7 +192,7 @@ void SimpleCCD::setupParams()
 /**************************************************************************************
 ** Client is asking us to start an exposure
 ***************************************************************************************/
-bool SimpleCCD::StartExposure(float duration)
+bool QHYCCD::StartExposure(float duration)
 {
     ExposureRequest=duration;
 
@@ -204,7 +210,7 @@ bool SimpleCCD::StartExposure(float duration)
 /**************************************************************************************
 ** Client is asking us to abort an exposure
 ***************************************************************************************/
-bool SimpleCCD::AbortExposure()
+bool QHYCCD::AbortExposure()
 {
     InExposure = false;
     return true;
@@ -213,7 +219,7 @@ bool SimpleCCD::AbortExposure()
 /**************************************************************************************
 ** Client is asking us to set a new temperature
 ***************************************************************************************/
-int SimpleCCD::SetTemperature(double temperature)
+int QHYCCD::SetTemperature(double temperature)
 {
     TemperatureRequest = temperature;
 
@@ -224,7 +230,7 @@ int SimpleCCD::SetTemperature(double temperature)
 /**************************************************************************************
 ** How much longer until exposure is done?
 ***************************************************************************************/
-float SimpleCCD::CalcTimeLeft()
+float QHYCCD::CalcTimeLeft()
 {
     double timesince;
     double timeleft;
@@ -241,7 +247,7 @@ float SimpleCCD::CalcTimeLeft()
 /**************************************************************************************
 ** Main device loop. We check for exposure and temperature progress here
 ***************************************************************************************/
-void SimpleCCD::TimerHit()
+void QHYCCD::TimerHit()
 {
     long timeleft;
 
@@ -255,7 +261,7 @@ void SimpleCCD::TimerHit()
         timeleft=CalcTimeLeft();
 
         // Less than a 0.1 second away from exposure completion
-        // This is an over simplified timing method, check CCDSimulator and simpleCCD for better timing checks
+        // This is an over simplified timing method, check CCDSimulator and QHYCCD for better timing checks
         if(timeleft < 0.1)
         {
           /* We're done exposing */
@@ -318,7 +324,7 @@ void SimpleCCD::TimerHit()
 /**************************************************************************************
 ** Create a random image and return it to client
 ***************************************************************************************/
-void SimpleCCD::grabImage()
+void QHYCCD::grabImage()
 {
    // Let's get a pointer to the frame buffer
    char * image = PrimaryCCD.getFrameBuffer();
