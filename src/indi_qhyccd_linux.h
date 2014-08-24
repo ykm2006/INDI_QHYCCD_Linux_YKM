@@ -3,10 +3,13 @@
 
 #include <libindi/indiccd.h>
 
+#include <qhyccd.h>
+
 class QHYCCD : public INDI::CCD
 {
 public:
     QHYCCD();
+    ~QHYCCD();
 
     void ISGetProperties(const char *dev);
 
@@ -43,6 +46,8 @@ private:
     INumber TemperatureN[1];
     INumberVectorProperty TemperatureNP;
 
+    // QHYCCD_Linux
+    qhyccd_handle *hCamera;
 };
 
 #endif // INDI_QHYCCD_LINUX_H

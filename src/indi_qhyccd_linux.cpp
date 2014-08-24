@@ -57,14 +57,16 @@ void ISNewBLOB (
 		char *names[],
 		int n)
 {
-   INDI_UNUSED(dev);
+  /*   INDI_UNUSED(dev);
    INDI_UNUSED(name);
    INDI_UNUSED(sizes);
    INDI_UNUSED(blobsizes);
    INDI_UNUSED(blobs);
    INDI_UNUSED(formats);
    INDI_UNUSED(names);
-   INDI_UNUSED(n);
+   INDI_UNUSED(n);*/
+  ISInit();
+  _QHYCCD->ISNewBLOB(dev, name, sizes, blobsizes, blobs, formats, names, n);
 }
 
 void ISSnoopDevice (XMLEle *root)
@@ -76,7 +78,27 @@ void ISSnoopDevice (XMLEle *root)
 
 QHYCCD::QHYCCD()
 {
-    InExposure = false;
+  IDLog("%s():\n", __FUNCTION__);
+
+  InExposure = false;
+
+  INDI::CCD::Capability cap;
+
+  cap.hasGuideHead = false;
+  cap.hasST4Port = false;
+  cap.hasShutter = true;
+  cap.hasCooler = true;
+  cap.canBin = true;
+  cap.canSubFrame = false;    // TODO: figure out how
+  // currently QHYCCD_Linux does not support abort
+  //  cap.canAbort = true;
+  cap.canAbort = false;
+
+  SetCapability(&cap);
+}
+
+QHYCCD::~QHYCCD() {
+  IDLog("%s()\n", __FUNCTION__);
 }
 
 /**************************************************************************************
@@ -84,12 +106,123 @@ QHYCCD::QHYCCD()
 ***************************************************************************************/
 bool QHYCCD::Connect()
 {
-    IDMessage(getDeviceName(), "QHYCCD connected successfully!");
+  IDLog("%s()\n", __FUNCTION__);
 
-    // Let's set a timer that checks teleCCDs status every POLLMS milliseconds.
-    SetTimer(POLLMS);
+  int ret = InitQHYCCDResource();
+  if (ret != QHYCCD_SUCCESS) {
+    IDLog("InitQHYCCDResource() failed.\n");
+    return false;
+  } else {
+    IDLog("InitQHYCCDResource() success.\n");
+  }
 
-    return true;
+  // lets count number of cameras
+  int nCameras = ScanQHYCCD();
+  if(nCameras < 0) {
+    IDLog("Could not find a device [%d]\n", nCameras);
+    ReleaseQHYCCDResource();
+    return false;
+  }
+
+  IDMessage(getDeviceName(), "  found [%d] QHYCCD Cameras.\n", nCameras);
+
+  char id[0x20] = {0};
+  bool found = false;
+  for(int i=0; i<nCameras; i++) {
+    ret = GetQHYCCDId(i, id);
+    if(ret != QHYCCD_SUCCESS) {
+      IDLog("Could not get CCD id for index[%d]\n", i);
+      IDMessage(getDeviceName(), "  Could not get CCD id for index[%d]\n", i);
+      continue;
+    }
+    IDLog("Found camera with id [%s]\n", id);
+    IDMessage(getDeviceName(), "  Found camera with id [%s]\n", id);
+    
+    if(strncmp(id, "IC8300", 6) == 0) {
+      found = true;
+      break;
+    }
+  }
+    
+  if(!found) {
+    IDLog("no cameras found.\n");
+    IDMessage(getDeviceName(), "  no cameras found.\n");
+    ReleaseQHYCCDResource();
+    return false;
+  }
+
+  IDLog("found camera [%s]\n", id);
+  IDMessage(getDeviceName(), "  found camera [%s]\n", id);
+  
+  hCamera = OpenQHYCCD(id);
+  if(!hCamera) {
+    IDLog("Could not open camera with id [%s]\n", id);
+    IDMessage(getDeviceName(), "  Could not open camera with id [%s]\n", id);
+    ReleaseQHYCCDResource();
+    return false;
+  }
+
+  IDLog("camera [%s] open successful.", id);
+  IDMessage(getDeviceName(), "  camera [%s] open successful.", id);
+  
+  ret = InitQHYCCD(hCamera);
+  if(ret != QHYCCD_SUCCESS) {
+    IDLog("Could not initialize camera [%d]\n", ret);
+    IDMessage(getDeviceName(), "  Could not initialize camera [%d]", ret);
+    CloseQHYCCD(hCamera);
+    ReleaseQHYCCDResource();
+    return false;
+  }
+
+  IDLog("Camera initialized successfully.\n");
+  IDMessage(getDeviceName(), "  Camera initialized successfully.");
+
+  SetQHYCCDBinMode(hCamera, 1, 1);
+
+  // set chip resolution and mem size
+  setupParams();
+
+  // Try to set gain
+  double gainMin, gainMax, gainStep;
+  ret = GetQHYCCDParamMinMaxStep(hCamera, CONTROL_GAIN, &gainMin, &gainMax, &gainStep);
+  if (ret != QHYCCD_SUCCESS) {
+    IDLog("Could not get min/max/step for GAIN (%d)\n", ret);
+  } else {
+    IDLog("Gain settings (%.1f, %.1f, +%.1f), setting to 14.0\n", gainMin, gainMax, gainStep);
+    ret = SetQHYCCDParam(hCamera, CONTROL_GAIN, 14.0);
+    if (ret != QHYCCD_SUCCESS) {
+      IDLog("Could not set gain to 14.0 (%d)!\n", ret);
+    }
+  }
+
+  // Try to set offset
+  ret = GetQHYCCDParamMinMaxStep(hCamera, CONTROL_OFFSET, &gainMin, &gainMax, &gainStep);
+  if (ret != QHYCCD_SUCCESS) {
+    IDLog("Could not get min/max/step for OFFSET (%d)\n", ret);
+  } else {
+    IDLog("Offset settings (%.1f, %.1f, +%.1f), setting to 107.0\n", gainMin, gainMax, gainStep);
+    ret = SetQHYCCDParam(hCamera, CONTROL_OFFSET, 107.0);
+    if (ret != QHYCCD_SUCCESS) {
+      IDLog("Could not set offset to 107.0 (%d)!\n", ret);
+    }
+  }
+
+  SetQHYCCDParam(hCamera, CONTROL_SPEED, 0);
+
+  // Read current temperature
+  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+  IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
+  TemperatureN[0].value = temp;			/* CCD chip temperatre (degrees C) */
+  TemperatureNP.s = IPS_BUSY;
+  IDSetNumber(&TemperatureNP, NULL);
+
+  //
+  IDMessage(getDeviceName(), "QHYCCD connected successfully!");
+
+  // Let's set a timer that checks teleCCDs status every POLLMS milliseconds.
+  SetTimer(POLLMS);
+
+  return true;
 }
 
 /**************************************************************************************
@@ -97,8 +230,14 @@ bool QHYCCD::Connect()
 ***************************************************************************************/
 bool QHYCCD::Disconnect()
 {
-    IDMessage(getDeviceName(), "QHYCCD disconnected successfully!");
-    return true;
+  IDLog("%s()\n", __FUNCTION__);
+
+  CloseQHYCCD(hCamera);
+  hCamera = NULL;
+  ReleaseQHYCCDResource();
+
+  IDMessage(getDeviceName(), "QHYCCD disconnected successfully!");
+  return true;
 }
 
 /**************************************************************************************
@@ -179,14 +318,30 @@ bool QHYCCD::updateProperties()
 ***************************************************************************************/
 void QHYCCD::setupParams()
 {
-    // Our CCD is an 8 bit CCD, 1280x1024 resolution, with 5.4um square pixels.
-    SetCCDParams(1280, 1024, 8, 5.4, 5.4);
+  IDLog("%s\n", __FUNCTION__);
 
-    // Let's calculate how much memory we need for the primary CCD buffer
-    int nbuf;
-    nbuf=PrimaryCCD.getXRes()*PrimaryCCD.getYRes() * PrimaryCCD.getBPP()/8;
-    nbuf+=512;                      //  leave a little extra at the end
-    PrimaryCCD.setFrameBufferSize(nbuf);
+  double chipw, chiph;
+  int    imagew, imageh;
+  double pixelw, pixelh;
+  int    bpp;
+
+  GetQHYCCDChipInfo(hCamera, &chipw, &chiph, &imagew, &imageh, &pixelw, &pixelh, &bpp);
+  SetCCDParams(imagew, imageh, bpp, pixelw, pixelh);
+    
+  int nbuf = GetQHYCCDMemLength(hCamera);
+
+  PrimaryCCD.setFrameBufferSize(nbuf + 512, true); // give some extra ends
+
+  PrimaryCCD.setFrameBufferSize(nbuf + 512, true);
+
+  /*
+  // Let's calculate how much memory we need for the primary CCD buffer
+  int nbuf;
+  nbuf=PrimaryCCD.getXRes()*PrimaryCCD.getYRes() * PrimaryCCD.getBPP()/8;
+  nbuf+=512;                      //  leave a little extra at the end
+  PrimaryCCD.setFrameBufferSize(nbuf);
+  */
+
 }
 
 /**************************************************************************************
@@ -251,10 +406,10 @@ void QHYCCD::TimerHit()
 {
     long timeleft;
 
-    IDLog("TimerHit().\n");
-
     if(isConnected() == false)
         return;  //  No need to reset timer if we are not connected anymore
+
+    IDLog("TimerHit():\n");
 
     if (InExposure)
     {
@@ -292,14 +447,15 @@ void QHYCCD::TimerHit()
 
       case IPS_BUSY:
         /* If target temperature is higher, then increase current CCD temperature */
-        if (currentCCDTemperature < TemperatureRequest)
-           currentCCDTemperature++;
+        if (currentCCDTemperature < TemperatureRequest) {
+	  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+	  IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
         /* If target temperature is lower, then decrese current CCD temperature */
-        else if (currentCCDTemperature > TemperatureRequest)
-          currentCCDTemperature--;
+        } else if (currentCCDTemperature > TemperatureRequest) {
+	  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+	  IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
         /* If they're equal, stop updating */
-        else
-        {
+	} else {
           TemperatureNP.s = IPS_OK;
           IDSetNumber(&TemperatureNP, "Target temperature reached.");
 
