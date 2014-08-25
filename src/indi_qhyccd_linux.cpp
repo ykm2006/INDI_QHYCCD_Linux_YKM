@@ -84,6 +84,9 @@ QHYCCD::QHYCCD()
 
   InExposure = false;
 
+  TemperatureRequest = 0.0;
+
+  /*
   INDI::CCD::Capability cap;
 
   cap.hasGuideHead = false;
@@ -95,8 +98,9 @@ QHYCCD::QHYCCD()
   // currently QHYCCD_Linux does not support abort
   //  cap.canAbort = true;
   cap.canAbort = false;
-
+ 
   SetCapability(&cap);
+  */
 }
 
 QHYCCD::~QHYCCD() {
@@ -218,7 +222,6 @@ bool QHYCCD::Connect()
   TemperatureNP.s = IPS_BUSY;
   IDSetNumber(&TemperatureNP, NULL);
 
-  //
   IDMessage(getDeviceName(), "QHYCCD connected successfully!");
 
   // Let's set a timer that checks teleCCDs status every POLLMS milliseconds.
@@ -261,12 +264,18 @@ bool QHYCCD::initProperties()
     // We set the CCD capabilities
     Capability cap;
 
-    cap.canAbort = true;
+    // currently QHYCCD_Linux does not support abort
+    //cap.canAbort = true;
+    cap.canAbort = false; 
     cap.canBin   = true;
-    cap.canSubFrame = true;
+    // currently QHYCCD_Linux does not support subframe
+    //cap.canSubFrame = true;
+    cap.canSubFrame = false;
     cap.hasCooler = true;
     cap.hasGuideHead = false;
-    cap.hasShutter = true;
+    // currently QHYCCD_Linux does not support shutter
+    //cap.hasShutter = true;
+    cap.hasShutter = false;
     cap.hasST4Port = false;
 
     SetCapability(&cap);
@@ -342,17 +351,43 @@ void QHYCCD::setupParams()
 ***************************************************************************************/
 bool QHYCCD::StartExposure(float duration)
 {
-    ExposureRequest=duration;
+  IDLog("%s(%f)\n", __FUNCTION__, duration);
 
-    // Since we have only have one CCD with one chip, we set the exposure duration of the primary CCD
-    PrimaryCCD.setExposureDuration(duration);
+  if(PrimaryCCD.getFrameType() == CCDChip::DARK_FRAME) {
+    IDLog("Setting Shutter Closed. Not supported currently.\n");
+    //SetQHYCCDShutter(hCamera, SHUTTER_CLOSED);
+  } else {
+    IDLog("Setting Shutter Open. Not supported currently.\n");
+    //SetQHYCCDSHutter(hCamera, SHUTTER_OPEN);
+  }
 
-    gettimeofday(&ExpStart,NULL);
+  int ret = SetQHYCCDParam(hCamera, CONTROL_EXPOSURE, (int)(duration * 1000 * 1000));
+  if(ret != QHYCCD_SUCCESS) {
+    IDLog("Could not set exposure time to %d us\n", (int)(duration * 1000 * 1000));
+    return false;
+  }
 
-    InExposure=true;
+  IDLog("Set exposure time.. begin exposing.\n");
 
-    // We're done
-    return true;
+  ret = ExpQHYCCDSingleFrame(hCamera);
+  if(ret != QHYCCD_SUCCESS) {
+    IDLog("Could not start exposure [%d]\n", ret);
+    return false;
+  }
+
+  ExposureRequest=duration;
+
+  // Since we have only have one CCD with one chip, we set the exposure duration of the primary CCD
+  PrimaryCCD.setExposureDuration(duration);
+
+  gettimeofday(&ExpStart,NULL);
+
+  InExposure=true;
+
+  // We're done
+  IDLog("Started exposing.\n");
+
+  return true;
 }
 
 /**************************************************************************************
@@ -410,7 +445,7 @@ void QHYCCD::TimerHit()
 
         // Less than a 0.1 second away from exposure completion
         // This is an over simplified timing method, check CCDSimulator and QHYCCD for better timing checks
-        if(timeleft < 0.1)
+        if(timeleft < -1.0)
         {
           /* We're done exposing */
            IDMessage(getDeviceName(), "Exposure done, downloading image...");
@@ -470,25 +505,22 @@ void QHYCCD::TimerHit()
     return;
 }
 
-/**************************************************************************************
-** Create a random image and return it to client
-***************************************************************************************/
 void QHYCCD::grabImage()
 {
    // Let's get a pointer to the frame buffer
-   char * image = PrimaryCCD.getFrameBuffer();
+  unsigned char * image = (unsigned char *)PrimaryCCD.getFrameBuffer();
 
-   // Get width and height
-   int width = PrimaryCCD.getSubW() / PrimaryCCD.getBinX() * PrimaryCCD.getBPP()/8;
-   int height = PrimaryCCD.getSubH() / PrimaryCCD.getBinY();
+  int h=0, w=0, bpp=0, ch=0;
 
-   // Fill buffer with random pattern
-   for (int i=0; i < height ; i++)
-     for (int j=0; j < width; j++)
-         image[i*width+j] = rand() % 255;
+  int ret=GetQHYCCDSingleFrame(hCamera, &w, &h, &bpp, &ch, image);
 
-   IDMessage(getDeviceName(), "Download complete.");
-
-   // Let INDI::CCD know we're done filling the image buffer
-   ExposureComplete(&PrimaryCCD);
+  if(ret >= 0) {
+    IDLog("Done exposing.\n");
+    IDLog("w=[%d], h=[%d], bpp=[%d], ch=[%d]\n",
+	  w, h, bpp, ch);
+    IDMessage(getDeviceName(), "Download complete.");
+    // Let INDI::CCD know we're done filling the image buffer
+    ExposureComplete(&PrimaryCCD);
+  }
+  return;
 }
