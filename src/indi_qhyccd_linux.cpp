@@ -7,6 +7,8 @@ const int POLLMS           = 500;       /* Polling interval 500 ms */
 const int MAX_CCD_TEMP     = 45;		/* Max CCD temperature */
 const int MIN_CCD_TEMP	   = -55;		/* Min CCD temperature */
 const float TEMP_THRESHOLD = .25;		/* Differential temperature threshold (C)*/
+const double DEFAULT_GAIN  = 14.0;
+const double DEFAULT_OFFSET = 107.0;
 
 /* Macro shortcut to CCD temperature value */
 #define currentCCDTemperature   TemperatureN[0].value
@@ -188,10 +190,10 @@ bool QHYCCD::Connect()
   if (ret != QHYCCD_SUCCESS) {
     IDLog("Could not get min/max/step for GAIN (%d)\n", ret);
   } else {
-    IDLog("Gain settings (%.1f, %.1f, +%.1f), setting to 14.0\n", gainMin, gainMax, gainStep);
-    ret = SetQHYCCDParam(hCamera, CONTROL_GAIN, 14.0);
+    IDLog("Gain settings (%.1f, %.1f, +%.1f), setting to %.1f\n", gainMin, gainMax, gainStep, DEFAULT_GAIN);
+    ret = SetQHYCCDParam(hCamera, CONTROL_GAIN, DEFAULT_GAIN);
     if (ret != QHYCCD_SUCCESS) {
-      IDLog("Could not set gain to 14.0 (%d)!\n", ret);
+      IDLog("Could not set gain to %.1f (%d)!\n", DEFAULT_GAIN, ret);
     }
   }
 
@@ -200,8 +202,8 @@ bool QHYCCD::Connect()
   if (ret != QHYCCD_SUCCESS) {
     IDLog("Could not get min/max/step for OFFSET (%d)\n", ret);
   } else {
-    IDLog("Offset settings (%.1f, %.1f, +%.1f), setting to 107.0\n", gainMin, gainMax, gainStep);
-    ret = SetQHYCCDParam(hCamera, CONTROL_OFFSET, 107.0);
+    IDLog("Offset settings (%.1f, %.1f, +%.1f), setting to %.1f\n", gainMin, gainMax, gainStep, DEFAULT_OFFSET);
+    ret = SetQHYCCDParam(hCamera, CONTROL_OFFSET, DEFAULT_OFFSET);
     if (ret != QHYCCD_SUCCESS) {
       IDLog("Could not set offset to 107.0 (%d)!\n", ret);
     }
@@ -332,16 +334,7 @@ void QHYCCD::setupParams()
 
   PrimaryCCD.setFrameBufferSize(nbuf + 512, true); // give some extra ends
 
-  PrimaryCCD.setFrameBufferSize(nbuf + 512, true);
-
-  /*
-  // Let's calculate how much memory we need for the primary CCD buffer
-  int nbuf;
-  nbuf=PrimaryCCD.getXRes()*PrimaryCCD.getYRes() * PrimaryCCD.getBPP()/8;
-  nbuf+=512;                      //  leave a little extra at the end
-  PrimaryCCD.setFrameBufferSize(nbuf);
-  */
-
+  return;
 }
 
 /**************************************************************************************
