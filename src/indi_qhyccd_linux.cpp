@@ -1,14 +1,17 @@
 // TODO
-// - accurate timeleft calculation
+// - accurate timeleft calculation 
+//   DONE. Stop is not supported yet.
 // - temperature control
 // - xfer speed setting
 // - guider ccd support
 // - check for other models
 // - make model name visible for client
 // - comment header
+// - stop support
 
 #include <sys/time.h>
 #include <memory>
+#include <math.h>
 
 #include "indi_qhyccd_linux.h"
 
@@ -341,6 +344,18 @@ void QHYCCD::setupParams()
 
   PrimaryCCD.setFrameBufferSize(nbuf + 512, true); // give some extra ends
 
+  // Get Temperature
+  // reconsider initialization timing, according to FLI example.
+  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+
+  currentCCDTemperature = temp;
+  TempStart = temp;
+  TemperatureNP.s = IPS_BUSY;
+  IDSetNumber(&TemperatureNP, NULL);
+
+  // set the time the new value of temperature is set
+  gettimeofday(&TimeTempStart, NULL);
+
   return;
 }
 
@@ -407,10 +422,15 @@ bool QHYCCD::AbortExposure()
 ***************************************************************************************/
 int QHYCCD::SetTemperature(double temperature)
 {
-    TemperatureRequest = temperature;
+  IDLog("%s(%f):\n", __FUNCTION__, temperature);
+  TemperatureRequest = temperature;
+  TempStart = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
 
-    // 1 means it will take a while to change the temperature
-    return 1;
+  // set the time the new value of temperature is set
+  gettimeofday(&TimeTempStart,NULL);
+
+  // 1 means it will take a while to change the temperature
+  return 1;
 }
 
 /**************************************************************************************
@@ -428,6 +448,20 @@ float QHYCCD::CalcTimeLeft()
 
     timeleft=ExposureRequest-timesince;
     return timeleft;
+}
+
+float QHYCCD::CalcTimeSince(struct timeval *start)
+{
+    double timesince;
+    struct timeval now;
+
+    gettimeofday(&now,NULL);
+
+    timesince=(double)(now.tv_sec * 1000.0 + now.tv_usec/1000) -
+      (double)(start->tv_sec * 1000.0 + start->tv_usec/1000);
+    timesince=timesince/1000;
+
+    return timesince;
 }
 
 /**************************************************************************************
@@ -461,7 +495,7 @@ void QHYCCD::TimerHit()
       PrimaryCCD.setExposureLeft(timeleft);
 
       if(timeleft * 1000.0 < (float)POLLMS) {
-	IDLog("timeleft[%f] < POLLMS[%f]\n", timeleft * 1000.0, (float)POLLMS);
+	//IDLog("timeleft[%f] < POLLMS[%f]\n", timeleft * 1000.0, (float)POLLMS);
 	if(timeleft <= 0.001) {
           /* We're done exposing */
 	  IDMessage(getDeviceName(), "Exposure done, downloading image...");
@@ -475,30 +509,67 @@ void QHYCCD::TimerHit()
     }
   }
 
+
   // TemperatureNP is defined in INDI::CCD
+  double temp;
+  float timesince = CalcTimeSince(&TimeTempStart);
+  float targettemp;
+
   switch (TemperatureNP.s) {
   case IPS_IDLE:
   case IPS_OK:
     break;
     
   case IPS_BUSY:
+
+    temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+
+    IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
+
     /* If target temperature is higher, then increase current CCD temperature */
     if (currentCCDTemperature < TemperatureRequest) {
-      double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-      IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
+
+      targettemp = TempStart + 10.0f / 180 * timesince;
+      if(targettemp > TemperatureRequest) {
+	targettemp = TemperatureRequest;
+      }
+
+      IDLog("timesince:[%f], targettemp=[%f]\n", timesince, targettemp);
+
+      ControlQHYCCDTemp(hCamera, targettemp);
+
+      // read current PWM for monitor.
+
+      double pwm = GetQHYCCDParam(hCamera, CONTROL_CURPWM);
+      IDLog("current pwm=[%f]\n", pwm);
+
       /* If target temperature is lower, then decrese current CCD temperature */
     } else if (currentCCDTemperature > TemperatureRequest) {
-      double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-      IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
-      /* If they're equal, stop updating */
-    } else {
-      TemperatureNP.s = IPS_OK;
-      IDSetNumber(&TemperatureNP, "Target temperature reached.");
-      
+      targettemp = TempStart - 10.0f / 180 * timesince;
+      if(targettemp < TemperatureRequest) {
+	targettemp = TemperatureRequest;
+      }
+
+      IDLog("timesince:[%f], targettemp=[%f]\n", timesince, targettemp);
+
+      ControlQHYCCDTemp(hCamera, targettemp);
+
+      // read current PWM for monitor.
+
+      double pwm = GetQHYCCDParam(hCamera, CONTROL_CURPWM);
+      IDLog("current pwm=[%f]\n", pwm);
+
+      /* If they're almost equal */
+    }
+
+    if(fabs(currentCCDTemperature - TemperatureRequest) <= 0.1) {
+
+      IDLog("almost reached at target temperature.\n");
+      TempStart = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+      gettimeofday(&TimeTempStart,NULL);
+
       break;
     }
-    
-    IDLog("SetTempleture to [%f]\n", currentCCDTemperature);
     
     IDSetNumber(&TemperatureNP, NULL);
     
@@ -508,7 +579,7 @@ void QHYCCD::TimerHit()
     break;
   }
 
-  IDLog("nexttimer=[%d]\n", nexttimer);
+  //IDLog("nexttimer=[%d]\n", nexttimer);
   SetTimer(nexttimer);
   return;
 }

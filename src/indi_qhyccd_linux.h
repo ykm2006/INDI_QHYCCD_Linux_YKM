@@ -30,6 +30,7 @@ protected:
 private:
     // Utility functions
     float CalcTimeLeft();
+    float CalcTimeSince(struct timeval *start);
     void  setupParams();
     void  grabImage();
 
@@ -47,6 +48,10 @@ private:
     // We declare the CCD temperature property
     INumber TemperatureN[1];
     INumberVectorProperty TemperatureNP;
+
+    // time the new value of temperature is set
+    struct timeval TimeTempStart;
+    double TempStart;
 
     // QHYCCD_Linux
     qhyccd_handle *hCamera;
