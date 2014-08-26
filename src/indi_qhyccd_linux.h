@@ -42,6 +42,8 @@ private:
     float TemperatureRequest;
     int   timerID;
 
+    bool AbortPrimaryFrame;
+
     // We declare the CCD temperature property
     INumber TemperatureN[1];
     INumberVectorProperty TemperatureNP;

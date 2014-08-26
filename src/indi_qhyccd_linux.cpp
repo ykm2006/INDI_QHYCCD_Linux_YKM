@@ -1,13 +1,22 @@
+// TODO
+// - accurate timeleft calculation
+// - temperature control
+// - xfer speed setting
+// - guider ccd support
+// - check for other models
+// - make model name visible for client
+// - comment header
+
 #include <sys/time.h>
 #include <memory>
 
 #include "indi_qhyccd_linux.h"
 
-const int POLLMS           = 500;       /* Polling interval 500 ms */
-const int MAX_CCD_TEMP     = 45;		/* Max CCD temperature */
-const int MIN_CCD_TEMP	   = -55;		/* Min CCD temperature */
-const float TEMP_THRESHOLD = .25;		/* Differential temperature threshold (C)*/
-const double DEFAULT_GAIN  = 14.0;
+const int POLLMS            = 500;       /* Polling interval 500 ms */
+const int MAX_CCD_TEMP      =  45;		/* Max CCD temperature */
+const int MIN_CCD_TEMP	    = -55;		/* Min CCD temperature */
+const float TEMP_THRESHOLD  =    .25;		/* Differential temperature threshold (C)*/
+const double DEFAULT_GAIN   =  14.0;
 const double DEFAULT_OFFSET = 107.0;
 
 /* Macro shortcut to CCD temperature value */
@@ -17,8 +26,9 @@ std::auto_ptr<QHYCCD> _QHYCCD(0);
 
 void ISInit()
 {
-    static int isInit =0;
-    if (isInit == 1)
+  static int isInit =0;
+  IDLog("%s():\n", __FUNCTION__);
+  if (isInit == 1)
         return;
 
      isInit = 1;
@@ -27,6 +37,7 @@ void ISInit()
 
 void ISGetProperties(const char *dev)
 {
+  IDLog("%s():\n", __FUNCTION__);
          ISInit();
          _QHYCCD->ISGetProperties(dev);
 }
@@ -83,24 +94,9 @@ QHYCCD::QHYCCD()
   IDLog("%s():\n", __FUNCTION__);
 
   InExposure = false;
+  AbortPrimaryFrame = false;
 
   TemperatureRequest = 0.0;
-
-  /*
-  INDI::CCD::Capability cap;
-
-  cap.hasGuideHead = false;
-  cap.hasST4Port = false;
-  cap.hasShutter = true;
-  cap.hasCooler = true;
-  cap.canBin = true;
-  cap.canSubFrame = false;    // TODO: figure out how
-  // currently QHYCCD_Linux does not support abort
-  //  cap.canAbort = true;
-  cap.canAbort = false;
- 
-  SetCapability(&cap);
-  */
 }
 
 QHYCCD::~QHYCCD() {
@@ -258,6 +254,8 @@ const char * QHYCCD::getDefaultName()
 ***************************************************************************************/
 bool QHYCCD::initProperties()
 {
+  IDLog("%s():\n", __FUNCTION__);
+
     // Must init parent properties first!
     INDI::CCD::initProperties();
 
@@ -383,6 +381,7 @@ bool QHYCCD::StartExposure(float duration)
   gettimeofday(&ExpStart,NULL);
 
   InExposure=true;
+  AbortPrimaryFrame = false;
 
   // We're done
   IDLog("Started exposing.\n");
@@ -395,10 +394,14 @@ bool QHYCCD::StartExposure(float duration)
 ***************************************************************************************/
 bool QHYCCD::AbortExposure()
 {
-    InExposure = false;
+  if(!InExposure) {
     return true;
-}
+  }
 
+  AbortPrimaryFrame = true;
+
+  return true;
+}
 /**************************************************************************************
 ** Client is asking us to set a new temperature
 ***************************************************************************************/
@@ -432,77 +435,82 @@ float QHYCCD::CalcTimeLeft()
 ***************************************************************************************/
 void QHYCCD::TimerHit()
 {
-    long timeleft;
+  IDLog("%s():\n", __FUNCTION__);
 
-    if(isConnected() == false)
-        return;  //  No need to reset timer if we are not connected anymore
+  // nexttimer is variable interval time in ms
+  int  nexttimer = POLLMS;
+    
+  if(isConnected() == false)
+    return;  //  No need to reset timer if we are not connected anymore
 
-    IDLog("TimerHit():\n");
+  if (InExposure) {
+    if(AbortPrimaryFrame) {
+      // if exposure is aborted, we need to send the camera StopExposure command.  Not yet supported.
+      InExposure = false;
+      AbortPrimaryFrame = false;
+    } else {
+      float timeleft;
+      timeleft = CalcTimeLeft();
 
-    if (InExposure)
-    {
-        timeleft=CalcTimeLeft();
+      IDLog("CCD Exposure left: %g - Requset: %g\n", timeleft, ExposureRequest);
 
-        // Less than a 0.1 second away from exposure completion
-        // This is an over simplified timing method, check CCDSimulator and QHYCCD for better timing checks
-        if(timeleft < -1.0)
-        {
+      if(timeleft < 0.0) {
+	timeleft = 0.0;
+      }
+      
+      PrimaryCCD.setExposureLeft(timeleft);
+
+      if(timeleft * 1000.0 < (float)POLLMS) {
+	IDLog("timeleft[%f] < POLLMS[%f]\n", timeleft * 1000.0, (float)POLLMS);
+	if(timeleft <= 0.001) {
           /* We're done exposing */
-           IDMessage(getDeviceName(), "Exposure done, downloading image...");
-
-          // Set exposure left to zero
-          PrimaryCCD.setExposureLeft(0);
-
-          // We're no longer exposing...
-          InExposure = false;
-
-          /* grab and save image */
-          grabImage();
-
-        }
-        else
-         // Just update time left in client
-         PrimaryCCD.setExposureLeft(timeleft);
-
-    }
-
-    // TemperatureNP is defined in INDI::CCD
-    switch (TemperatureNP.s)
-    {
-      case IPS_IDLE:
-      case IPS_OK:
-        break;
-
-      case IPS_BUSY:
-        /* If target temperature is higher, then increase current CCD temperature */
-        if (currentCCDTemperature < TemperatureRequest) {
-	  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-	  IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
-        /* If target temperature is lower, then decrese current CCD temperature */
-        } else if (currentCCDTemperature > TemperatureRequest) {
-	  double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-	  IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
-        /* If they're equal, stop updating */
+	  IDMessage(getDeviceName(), "Exposure done, downloading image...");
+	  InExposure = false;
+	  grabImage();
 	} else {
-          TemperatureNP.s = IPS_OK;
-          IDSetNumber(&TemperatureNP, "Target temperature reached.");
-
-          break;
-        }
-
-	IDLog("SetTempleture to [%f]\n", currentCCDTemperature);
-
-
-        IDSetNumber(&TemperatureNP, NULL);
-
-        break;
-
-      case IPS_ALERT:
-        break;
+	  // we finetune next timer event
+	  nexttimer = timeleft * 1000.0;
+	}
+      }
     }
+  }
 
-    SetTimer(POLLMS);
-    return;
+  // TemperatureNP is defined in INDI::CCD
+  switch (TemperatureNP.s) {
+  case IPS_IDLE:
+  case IPS_OK:
+    break;
+    
+  case IPS_BUSY:
+    /* If target temperature is higher, then increase current CCD temperature */
+    if (currentCCDTemperature < TemperatureRequest) {
+      double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+      IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
+      /* If target temperature is lower, then decrese current CCD temperature */
+    } else if (currentCCDTemperature > TemperatureRequest) {
+      double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+      IDLog("Current temp: %.1f   Target temp: %.1f\n", temp, TemperatureRequest);
+      /* If they're equal, stop updating */
+    } else {
+      TemperatureNP.s = IPS_OK;
+      IDSetNumber(&TemperatureNP, "Target temperature reached.");
+      
+      break;
+    }
+    
+    IDLog("SetTempleture to [%f]\n", currentCCDTemperature);
+    
+    IDSetNumber(&TemperatureNP, NULL);
+    
+    break;
+    
+  case IPS_ALERT:
+    break;
+  }
+
+  IDLog("nexttimer=[%d]\n", nexttimer);
+  SetTimer(nexttimer);
+  return;
 }
 
 void QHYCCD::grabImage()
