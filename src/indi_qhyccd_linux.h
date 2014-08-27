@@ -2,7 +2,6 @@
 #define INDI_QHYCCD_LINUX_H
 
 #include <libindi/indiccd.h>
-
 #include <qhyccd.h>
 
 class QHYCCD : public INDI::CCD
@@ -25,6 +24,7 @@ protected:
     bool StartExposure(float duration);
     bool AbortExposure();
     int SetTemperature(double temperature);
+	virtual void addFITSKeywords(fitsfile *fptr, CCDChip *targetChip);
     void TimerHit();
 
 private:
@@ -42,6 +42,7 @@ private:
     float ExposureRequest;
     float TemperatureRequest;
     int   timerID;
+	float minDuration;
 
     bool AbortPrimaryFrame;
 
@@ -55,6 +56,7 @@ private:
 
     // QHYCCD_Linux
     qhyccd_handle *hCamera;
+
 };
 
 #endif // INDI_QHYCCD_LINUX_H
