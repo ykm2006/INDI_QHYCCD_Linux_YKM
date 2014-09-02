@@ -541,7 +541,7 @@ void QHYCCD::addFITSKeywords(fitsfile *fptr, CCDChip *targetChip)
 
     int status=0;
     fits_update_key_s(fptr, TDOUBLE, "CCD-TEMP", &(TemperatureN[0].value), "CCD Temperature (Celcius)", &status);
-    fits_write_date(fptr, &status);
+//    fits_write_date(fptr, &status);
 }
 
 /**************************************************************************************
@@ -549,7 +549,7 @@ void QHYCCD::addFITSKeywords(fitsfile *fptr, CCDChip *targetChip)
 ***************************************************************************************/
 void QHYCCD::TimerHit()
 {
-    IDLog("%s():\n", __FUNCTION__);
+    //IDLog("%s():\n", __FUNCTION__);
 
     // nexttimer is variable interval time in ms
     int nexttimer = POLLMS;
@@ -595,6 +595,9 @@ void QHYCCD::TimerHit()
     float timesince = CalcTimeSince(&TimeTempStart);
     float targettemp;
 
+    currentCCDTemperature = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+    IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
+
     switch (TemperatureNP.s) {
     case IPS_IDLE:
     case IPS_OK:
@@ -607,15 +610,14 @@ void QHYCCD::TimerHit()
 
             gettimeofday(&TimeTempStart, NULL);
 
+            TempStart = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+
             break;
         }
         break;
 
     case IPS_BUSY:
     {
-        currentCCDTemperature = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-
-//        IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
 
         /* If target temperature is higher, then increase current CCD temperature */
         if (currentCCDTemperature < TemperatureRequest) {
@@ -627,6 +629,7 @@ void QHYCCD::TimerHit()
 
             /* If target temperature is lower, then decrese current CCD temperature */
         } else if (currentCCDTemperature > TemperatureRequest) {
+
             targettemp = TempStart - 10.0f / 180 * timesince;
             if (targettemp < TemperatureRequest) {
                 targettemp = TemperatureRequest;
@@ -634,14 +637,14 @@ void QHYCCD::TimerHit()
 
         }
 
-//        IDLog("timesince:[%f], targettemp=[%f]\n", timesince, targettemp);
+        IDLog("timesince:[%f], targettemp=[%f]\n", timesince, targettemp);
 
         ControlQHYCCDTemp(hCamera, targettemp);
 
         // read current PWM for monitor
 
-//        double pwm = GetQHYCCDParam(hCamera, CONTROL_CURPWM);
-//        IDLog("current pwm=[%f]\n", pwm);
+        double pwm = GetQHYCCDParam(hCamera, CONTROL_CURPWM);
+        IDLog("current pwm=[%f]\n", pwm);
 
         if (fabs(currentCCDTemperature - TemperatureRequest) <= TEMP_THRESHOLD) {
 

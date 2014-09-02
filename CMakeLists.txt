@@ -13,7 +13,7 @@ include_directories(${CMAKE_SOURCE_DIR})
 include_directories(${INDI_INCLUDE_DIR})
 include_directories( ${CFITSIO_INCLUDE_DIR})
 include_directories("/usr/local/include/libqhyccd")
-include_directories("/usr/local/include/libindi")
+#include_directories("/usr/local/include/libindi")
 
 set(indi_qhyccd_linux_SRCS ${CMAKE_SOURCE_DIR}/src/indi_qhyccd_linux.cpp)
 
