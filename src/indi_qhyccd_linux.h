@@ -33,6 +33,7 @@ private:
     float CalcTimeSince(struct timeval *start);
     void  setupParams();
     void  grabImage();
+	int   ResetTempControl(double targetTemp);
 
     // Are we exposing?
     bool InExposure;
@@ -51,8 +52,10 @@ private:
     INumberVectorProperty TemperatureNP;
 
     // time the new value of temperature is set
-    struct timeval TimeTempStart;
-    double TempStart;
+    struct timeval TimeTemperatureControlStarted;
+
+	// Temperature when the control is started
+    double TemperatureWhenControlStarted;
 
     // QHYCCD_Linux
     qhyccd_handle *hCamera;

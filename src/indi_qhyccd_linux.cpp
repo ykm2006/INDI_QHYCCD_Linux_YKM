@@ -1,16 +1,29 @@
 // TODO
 // - accurate timeleft calculation 
 //   DONE.  Stop is not supported yet.
+
 // - temperature control
 //   DONE.  PID control needs to be improved.
+
 // - code cleanup
+//   DONE.
+
 // - finetune PID control
+//   not done.   Will depend on lzr's code.
+//   Got to be not not too bad with 1 second interval
+
 // - configure temp control speed
+
 // - xfer speed setting
+
 // - guider ccd support
+
 // - check for other models
+
 // - make model name visible for client
+
 // - comment header
+
 // - stop support
 
 #include <sys/time.h>
@@ -360,24 +373,15 @@ void QHYCCD::setupParams()
 
     PrimaryCCD.setFrameBufferSize(nbuf + 512, true);    // give some extra ends
 
-    // Get Temperature
-    // reconsider initialization timing, according to FLI example.
-    double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+    ResetTempControl(TemperatureRequest);
 
-    IDMessage(getDeviceName(), "The CCD Temperature is %f.\n", temp);
-
-    currentCCDTemperature = temp;
     TemperatureN[0].min = MIN_CCD_TEMP;
     TemperatureN[0].max = MAX_CCD_TEMP;
     IUUpdateMinMax(&TemperatureNP);
     IDSetNumber(&TemperatureNP, NULL);
 
-    TempStart = temp;
     TemperatureNP.s = IPS_BUSY;
     IDSetNumber(&TemperatureNP, NULL);
-
-    // set the time the new value of temperature is set
-    gettimeofday(&TimeTempStart, NULL);
 
     // binning
     SetQHYCCDBinMode(hCamera, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
@@ -394,18 +398,7 @@ int QHYCCD::SetTemperature(double temperature)
 {
     IDLog("%s(%f):\n", __FUNCTION__, temperature);
     TemperatureRequest = temperature;
-    TempStart = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
-
-    // set the time the new value of temperature is set
-    gettimeofday(&TimeTempStart, NULL);
-
-    if(fabs(TempStart - temperature) <= TEMP_THRESHOLD) {
-        // within threshold.   temp control completed.
-        return 1;
-    } else {
-        // 0 means it will take a while to change the temperature
-        return 0;
-    }
+    return ResetTempControl(temperature);
 }
 
 /**************************************************************************************
@@ -592,7 +585,7 @@ void QHYCCD::TimerHit()
         }
     }
     // TemperatureNP is defined in INDI::CCD
-    float timesince = CalcTimeSince(&TimeTempStart);
+    float timesince = CalcTimeSince(&TimeTemperatureControlStarted);
     float targettemp;
 
     currentCCDTemperature = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
@@ -605,12 +598,11 @@ void QHYCCD::TimerHit()
 
             IDLog("over threshold, start controlling.\n");
 
+            // begin control
             TemperatureNP.s = IPS_BUSY;
             IDSetNumber(&TemperatureNP, NULL);
 
-            gettimeofday(&TimeTempStart, NULL);
-
-            TempStart = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+            ResetTempControl(TemperatureRequest);
 
             break;
         }
@@ -619,25 +611,25 @@ void QHYCCD::TimerHit()
     case IPS_BUSY:
     {
 
-        /* If target temperature is higher, then increase current CCD temperature */
         if (currentCCDTemperature < TemperatureRequest) {
+            /* If target temperature is higher, then increase current CCD temperature */
 
-            targettemp = TempStart + 10.0f / 180 * timesince;
+            targettemp = TemperatureWhenControlStarted + 10.0f / 180 * timesince;
             if (targettemp > TemperatureRequest) {
                 targettemp = TemperatureRequest;
             }
 
-            /* If target temperature is lower, then decrese current CCD temperature */
         } else if (currentCCDTemperature > TemperatureRequest) {
+            /* If target temperature is lower, then decrese current CCD temperature */
 
-            targettemp = TempStart - 10.0f / 180 * timesince;
+            targettemp = TemperatureWhenControlStarted - 10.0f / 180 * timesince;
             if (targettemp < TemperatureRequest) {
                 targettemp = TemperatureRequest;
             }
 
         }
 
-        IDLog("timesince:[%f], targettemp=[%f]\n", timesince, targettemp);
+        IDLog("timesince:[%.1f], targettemp=[%.1f]\n", timesince, targettemp);
 
         ControlQHYCCDTemp(hCamera, targettemp);
 
@@ -666,6 +658,30 @@ void QHYCCD::TimerHit()
     //IDLog("nexttimer=[%d]\n", nexttimer);
     SetTimer(nexttimer);
     return;
+}
+
+/*
+  ResetTempControl(): reset the control and set the beginning of the control
+  by reading current temperature of CCD and resetting the time keeper
+ */
+int QHYCCD::ResetTempControl(double targetTemp)
+{
+    double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+
+    TemperatureRequest = targetTemp;
+    currentCCDTemperature = temp;
+    TemperatureWhenControlStarted = temp;
+
+    // set the time the new value of temperature is set
+    gettimeofday(&TimeTemperatureControlStarted, NULL);
+
+    if(fabs(TemperatureWhenControlStarted - targetTemp) <= TEMP_THRESHOLD) {
+        // within threshold.   temp control completed.
+        return 1;
+    } else {
+        // 0 means it will take a while to change the temperature
+        return 0;
+    }
 }
 
 void QHYCCD::grabImage()
