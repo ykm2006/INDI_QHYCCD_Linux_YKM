@@ -1,30 +1,56 @@
-// TODO
-// - accurate timeleft calculation 
-//   DONE.  Stop is not supported yet.
+/*
+ QHY CCD INDI Driver based on QHYCCD_Linux
 
-// - temperature control
-//   DONE.  PID control needs to be improved.
+ Copyright(C) 2014 Yuichi Kawamoto (ykm2006083001 AT gmail DOT com)
+ All rights reserved.
 
-// - code cleanup
-//   DONE.
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation; either version 2 of the License, or (at your option)
+ any later version.
 
-// - finetune PID control
-//   not done.   Will depend on lzr's code.
-//   Got to be not not too bad with 1 second interval
+ This program is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ more details.
 
-// - configure temp control speed
+ You should have received a copy of the GNU General Public License along with
+ this program; if not, write to the Free Software Foundation, Inc., 59
+ Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
-// - xfer speed setting
+ The full GNU General Public License is included in this distribution in the
+ file called LICENSE.
+ */
 
-// - guider ccd support
+/* ------------------------------------------------------------------------------------
+   TODO
+   - accurate timeleft calculation 
+     DONE.  Stop is not supported yet.
 
-// - check for other models
+   - temperature control
+     DONE.  PID control needs to be improved.
+  
+   - code cleanup
+     (refs #3276)
+  
+   - finetune PID control
+     not done.   Will depend on lzr's code.
+     Got to be not not too bad with 1 second interval
 
-// - make model name visible for client
+   - configure temp control speed
 
-// - comment header
+   - xfer speed setting
 
-// - stop support
+   - guider ccd support
+
+   - check for other models
+ 
+   - make model name visible for client
+
+   - comment header
+
+   - stop support
+   --------------------------------------------------------------------------------- */
 
 #include <sys/time.h>
 #include <memory>
@@ -43,6 +69,7 @@ const double DEFAULT_OFFSET = 107.0;
 /* Macro shortcut to CCD temperature value */
 #define currentCCDTemperature   TemperatureN[0].value
 
+/* auto pointer for indi driver */
 std::auto_ptr <QHYCCD> _QHYCCD(0);
 
 /**************************************************************************************
@@ -264,8 +291,8 @@ bool QHYCCD::Connect()
     IDLog("found camera [%s]\n", id);
     IDMessage(getDeviceName(), "  found camera [%s]\n", id);
 
-    hCamera = OpenQHYCCD(id);
-    if (!hCamera) {
+    CameraHandle = OpenQHYCCD(id);
+    if (!CameraHandle) {
         IDLog("Could not open camera with id [%s]\n", id);
         IDMessage(getDeviceName(),
                   "  Could not open camera with id [%s]\n", id);
@@ -276,12 +303,12 @@ bool QHYCCD::Connect()
     IDLog("camera [%s] open successful.", id);
     IDMessage(getDeviceName(), "  camera [%s] open successful.", id);
 
-    ret = InitQHYCCD(hCamera);
+    ret = InitQHYCCD(CameraHandle);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not initialize camera [%d]\n", ret);
         IDMessage(getDeviceName(), "  Could not initialize camera [%d]",
                   ret);
-        CloseQHYCCD(hCamera);
+        CloseQHYCCD(CameraHandle);
         ReleaseQHYCCDResource();
         return false;
     }
@@ -290,7 +317,7 @@ bool QHYCCD::Connect()
 
     double gainMin, gainMax, gainStep;
     ret =
-        GetQHYCCDParamMinMaxStep(hCamera, CONTROL_GAIN, &gainMin, &gainMax,
+        GetQHYCCDParamMinMaxStep(CameraHandle, CONTROL_GAIN, &gainMin, &gainMax,
                                  &gainStep);
 
     if (ret != QHYCCD_SUCCESS) {
@@ -298,7 +325,7 @@ bool QHYCCD::Connect()
     } else {
         IDLog("Gain settings (%.1f, %.1f, +%.1f), setting to %.1f\n",
               gainMin, gainMax, gainStep, DEFAULT_GAIN);
-        ret = SetQHYCCDParam(hCamera, CONTROL_GAIN, DEFAULT_GAIN);
+        ret = SetQHYCCDParam(CameraHandle, CONTROL_GAIN, DEFAULT_GAIN);
         if (ret != QHYCCD_SUCCESS) {
             IDLog("Could not set gain to %.1f (%d)!\n", DEFAULT_GAIN, ret);
         }
@@ -306,21 +333,21 @@ bool QHYCCD::Connect()
 
     // Try to set offset
     ret =
-        GetQHYCCDParamMinMaxStep(hCamera, CONTROL_OFFSET, &gainMin,
+        GetQHYCCDParamMinMaxStep(CameraHandle, CONTROL_OFFSET, &gainMin,
                                  &gainMax, &gainStep);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not get min/max/step for OFFSET (%d)\n", ret);
     } else {
         IDLog("Offset settings (%.1f, %.1f, +%.1f), setting to %.1f\n",
               gainMin, gainMax, gainStep, DEFAULT_OFFSET);
-        ret = SetQHYCCDParam(hCamera, CONTROL_OFFSET, DEFAULT_OFFSET);
+        ret = SetQHYCCDParam(CameraHandle, CONTROL_OFFSET, DEFAULT_OFFSET);
         if (ret != QHYCCD_SUCCESS) {
             IDLog("Could not set offset to 107.0 (%d)!\n", ret);
         }
     }
 
     // control speed.  needs to be set from the client later.
-    SetQHYCCDParam(hCamera, CONTROL_SPEED, 0);
+    SetQHYCCDParam(CameraHandle, CONTROL_SPEED, 0);
 
     IDLog("Camera initialized successfully.\n");
     IDMessage(getDeviceName(), "  Camera initialized successfully.");
@@ -340,8 +367,8 @@ bool QHYCCD::Disconnect()
 {
     IDLog("%s()\n", __FUNCTION__);
 
-    CloseQHYCCD(hCamera);
-    hCamera = NULL;
+    CloseQHYCCD(CameraHandle);
+    CameraHandle = NULL;
     ReleaseQHYCCDResource();
 
     IDMessage(getDeviceName(), "QHYCCD disconnected successfully!");
@@ -350,6 +377,7 @@ bool QHYCCD::Disconnect()
 
 /**************************************************************************************
 ** Setting up CCD parameters
+** basically getting camera info and set parameters in driver
 ***************************************************************************************/
 void QHYCCD::setupParams()
 {
@@ -360,14 +388,14 @@ void QHYCCD::setupParams()
     double pixelw, pixelh;
     int bpp;
 
-    GetQHYCCDChipInfo(hCamera, &chipw, &chiph, &imagew, &imageh, &pixelw,
+    GetQHYCCDChipInfo(CameraHandle, &chipw, &chiph, &imagew, &imageh, &pixelw,
                       &pixelh, &bpp);
     SetCCDParams(imagew, imageh, bpp, pixelw, pixelh);
 
     IDLog("w[%d], h[%d], bpp[%d], pw[%.1f], ph[%.1f]\n", 
           imagew, imageh, bpp, pixelw, pixelh);
 
-    int nbuf = GetQHYCCDMemLength(hCamera);
+    int nbuf = GetQHYCCDMemLength(CameraHandle);
 
     IDLog("nbuf = [%d]\n", nbuf);
 
@@ -375,6 +403,7 @@ void QHYCCD::setupParams()
 
     ResetTempControl(TemperatureRequest);
 
+    TemperatureN[0].value = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
     TemperatureN[0].min = MIN_CCD_TEMP;
     TemperatureN[0].max = MAX_CCD_TEMP;
     IUUpdateMinMax(&TemperatureNP);
@@ -384,7 +413,7 @@ void QHYCCD::setupParams()
     IDSetNumber(&TemperatureNP, NULL);
 
     // binning
-    SetQHYCCDBinMode(hCamera, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
+    SetQHYCCDBinMode(CameraHandle, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
 
     minDuration = 0.05;
 
@@ -438,17 +467,19 @@ bool QHYCCD::StartExposure(float duration)
 
     if(shutterOpen) {
         IDLog("Setting Shutter Open. Not supported currently.\n");
-        //SetQHYCCDShutter(hCamera, SHUTTER_CLOSED);
+        //SetQHYCCDShutter(CameraHandle, SHUTTER_OPEN);
     } else {
         IDLog("Setting Shutter Closed. Not supported currently.\n");
-        //SetQHYCCDShutter(hCamera, SHUTTER_CLOSED);
+        //SetQHYCCDShutter(CameraHandle, SHUTTER_CLOSED);
     }
 
     if(durationControl) {
+        IDLog("Duration is controlled to minimal exposure.\n");
         duration = minDuration;
     }
 
-    int ret = SetQHYCCDParam(hCamera, CONTROL_EXPOSURE,
+    // QHYCCD_Linux exposure is microsecond
+    int ret = SetQHYCCDParam(CameraHandle, CONTROL_EXPOSURE,
                              (int) (duration * 1000 * 1000));
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not set exposure time to %d us\n",
@@ -458,7 +489,7 @@ bool QHYCCD::StartExposure(float duration)
 
     IDLog("Set exposure time.. begin exposing.\n");
 
-    ret = ExpQHYCCDSingleFrame(hCamera);
+    ret = ExpQHYCCDSingleFrame(CameraHandle);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not start exposure [%d]\n", ret);
         return false;
@@ -467,6 +498,8 @@ bool QHYCCD::StartExposure(float duration)
     ExposureRequest = duration;
 
     // Since we have only one CCD with one chip, we set the exposure duration of the primary CCD
+    // in case of IC8300, it may have guider CCD at its USB port then can be considered as 
+    // a built-in guider chip..   will be considered later
     PrimaryCCD.setExposureDuration(duration);
 
     gettimeofday(&ExpStart, NULL);
@@ -500,40 +533,42 @@ bool QHYCCD::AbortExposure()
 ***************************************************************************************/
 float QHYCCD::CalcTimeLeft()
 {
-    double timesince;
-    double timeleft;
+    double timeSince;
+    double timeLeft;
     struct timeval now;
     gettimeofday(&now, NULL);
 
-    timesince =
-        (double) (now.tv_sec * 1000.0 + now.tv_usec / 1000) -
-        (double) (ExpStart.tv_sec * 1000.0 + ExpStart.tv_usec / 1000);
-    timesince = timesince / 1000;
+    timeSince = CalcTimeSince(&ExpStart);
+    timeLeft = ExposureRequest - timeSince;
 
-    timeleft = ExposureRequest - timesince;
-    return timeleft;
+    return timeLeft;
 }
 
 float QHYCCD::CalcTimeSince(struct timeval *start)
 {
-    double timesince;
+    double timeSince;
     struct timeval now;
 
     gettimeofday(&now, NULL);
 
-    timesince = (double) (now.tv_sec * 1000.0 + now.tv_usec / 1000) -
+    timeSince = (double) (now.tv_sec * 1000.0 + now.tv_usec / 1000) -
         (double) (start->tv_sec * 1000.0 + start->tv_usec / 1000);
-    timesince = timesince / 1000;
+    timeSince = timeSince / 1000;
 
-    return timesince;
+    return timeSince;
 }
 
+/**************************************************************************************
+ * got from fli_ccd.cpp in indi_3rdparty library
+***************************************************************************************/
 void QHYCCD::addFITSKeywords(fitsfile *fptr, CCDChip *targetChip)
 {
     INDI::CCD::addFITSKeywords(fptr, targetChip);
 
     int status=0;
     fits_update_key_s(fptr, TDOUBLE, "CCD-TEMP", &(TemperatureN[0].value), "CCD Temperature (Celcius)", &status);
+
+// does not work, not sure why
 //    fits_write_date(fptr, &status);
 }
 
@@ -552,7 +587,8 @@ void QHYCCD::TimerHit()
 
     if (InExposure) {
         if (AbortPrimaryFrame) {
-            // if exposure is aborted, we need to send the camera StopExposure command.  Not yet supported.
+            // if exposure is aborted, we need to send the camera StopExposure command.
+            // Not yet supported by lzr's linux driver,
             // so actually nothing changed.
             // InExposure = false;
             AbortPrimaryFrame = false;
@@ -588,7 +624,7 @@ void QHYCCD::TimerHit()
     float timesince = CalcTimeSince(&TimeTemperatureControlStarted);
     float targettemp;
 
-    currentCCDTemperature = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+    currentCCDTemperature = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
     IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
 
     switch (TemperatureNP.s) {
@@ -596,7 +632,7 @@ void QHYCCD::TimerHit()
     case IPS_OK:
         if (fabs(currentCCDTemperature - TemperatureRequest) > TEMP_THRESHOLD) {
 
-            IDLog("over threshold, start controlling.\n");
+            IDLog("kicked the threshold, start controlling.\n");
 
             // begin control
             TemperatureNP.s = IPS_BUSY;
@@ -620,7 +656,7 @@ void QHYCCD::TimerHit()
             }
 
         } else if (currentCCDTemperature > TemperatureRequest) {
-            /* If target temperature is lower, then decrese current CCD temperature */
+            /* If target temperature is lower, then decrease current CCD temperature */
 
             targettemp = TemperatureWhenControlStarted - 10.0f / 180 * timesince;
             if (targettemp < TemperatureRequest) {
@@ -631,11 +667,11 @@ void QHYCCD::TimerHit()
 
         IDLog("timesince:[%.1f], targettemp=[%.1f]\n", timesince, targettemp);
 
-        ControlQHYCCDTemp(hCamera, targettemp);
+        ControlQHYCCDTemp(CameraHandle, targettemp);
 
         // read current PWM for monitor
 
-        double pwm = GetQHYCCDParam(hCamera, CONTROL_CURPWM);
+        double pwm = GetQHYCCDParam(CameraHandle, CONTROL_CURPWM);
         IDLog("current pwm=[%f]\n", pwm);
 
         if (fabs(currentCCDTemperature - TemperatureRequest) <= TEMP_THRESHOLD) {
@@ -660,13 +696,13 @@ void QHYCCD::TimerHit()
     return;
 }
 
-/*
+/**************************************************************************************
   ResetTempControl(): reset the control and set the beginning of the control
   by reading current temperature of CCD and resetting the time keeper
- */
+***************************************************************************************/
 int QHYCCD::ResetTempControl(double targetTemp)
 {
-    double temp = GetQHYCCDParam(hCamera, CONTROL_CURTEMP);
+    double temp = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
 
     TemperatureRequest = targetTemp;
     currentCCDTemperature = temp;
@@ -684,6 +720,9 @@ int QHYCCD::ResetTempControl(double targetTemp)
     }
 }
 
+/**************************************************************************************
+  grabImage(): read image data from chip and burn it to buffer
+***************************************************************************************/
 void QHYCCD::grabImage()
 {
     // Let's get a pointer to the frame buffer
@@ -691,7 +730,7 @@ void QHYCCD::grabImage()
 
     int h = 0, w = 0, bpp = 0, ch = 0;
 
-    int ret = GetQHYCCDSingleFrame(hCamera, &w, &h, &bpp, &ch, image);
+    int ret = GetQHYCCDSingleFrame(CameraHandle, &w, &h, &bpp, &ch, image);
 
     if (ret >= 0) {
         IDLog("Done exposing.\n");
