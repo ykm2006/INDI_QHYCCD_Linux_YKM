@@ -35,6 +35,7 @@ public:
     ~QHYCCD();
 
     void ISGetProperties(const char *dev);
+	virtual bool ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n);
 
 protected:
     // General device functions
@@ -95,6 +96,10 @@ private:
 
     // camera handle for lzr's QHYCCD_Linux
     qhyccd_handle *CameraHandle;
+
+	// user setting for temperature control ratio
+	INumberVectorProperty *TemperatureControlRatioNV;
+	INumber TemperatureControlRatioN[1];
 
 };
 

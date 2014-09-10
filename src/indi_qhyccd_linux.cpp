@@ -142,11 +142,14 @@ QHYCCD::QHYCCD()
 {
     IDLog("%s():\n", __FUNCTION__);
 
+    TemperatureControlRatioNV = new INumberVectorProperty;
 }
 
 QHYCCD::~QHYCCD()
 {
     IDLog("%s()\n", __FUNCTION__);
+
+    delete TemperatureControlRatioNV;
 }
 
 /**************************************************************************************
@@ -192,6 +195,13 @@ bool QHYCCD::initProperties()
 
     SetCapability(&cap);
 
+    // initialize the UI properties
+    IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
+                 "Temperature Control Ratio","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
+    IUFillNumberVector(TemperatureControlRatioNV, TemperatureControlRatioN, 1, getDeviceName(),
+                       "TEMPERATURE_CONTROL_RATIO","Temperature Control Ratio label",
+                       "Options",IP_RW,60,IPS_IDLE);
+
     return true;
 
 }
@@ -205,8 +215,9 @@ void QHYCCD::ISGetProperties(const char *dev)
 
     // If we are _already_ connected, let's define our temperature property to the client now
     if (isConnected()) {
-        // Define our only property temperature
+
         defineNumber(&TemperatureNP);
+        defineNumber(TemperatureControlRatioNV);
     }
 
     // Add Debug, Simulator, and Configuration controls
@@ -741,3 +752,34 @@ void QHYCCD::grabImage()
     }
     return;
 }
+
+bool QHYCCD::ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n)
+{
+    //  first check if it's for our device
+    //IDLog("INDI::CCD::ISNewNumber %s\n",name);
+    if(strcmp(dev,getDeviceName())==0)
+    {
+        //  This is for our device
+        //  Now lets see if it's something we process here
+
+        //IDLog("CCDSim::ISNewNumber %s\n",name);
+        if(strcmp(name,"TEMPERATURE_CONTROL_RATIO")==0)
+        {
+            IUUpdateNumber(TemperatureControlRatioNV, values, names, n);
+            TemperatureControlRatioNV->s=IPS_OK;
+
+            //  Reset our parameters now
+            setupParams();
+            IDSetNumber(TemperatureControlRatioNV, NULL);
+            //saveConfig();
+
+            //IDLog("Frame set to %4.0f,%4.0f %4.0f x %4.0f\n",CcdFrameN[0].value,CcdFrameN[1].value,CcdFrameN[2].value,CcdFrameN[3].value);
+            //seeing=SimulatorSettingsN[0].value;
+            return true;
+        }
+    }
+    //  if we didn't process it, continue up the chain, let somebody else
+    //  give it a shot
+    return INDI::CCD::ISNewNumber(dev, name, values, names, n);
+}
+
