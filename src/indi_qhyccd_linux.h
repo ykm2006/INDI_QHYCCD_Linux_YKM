@@ -98,7 +98,7 @@ private:
     qhyccd_handle *CameraHandle;
 
 	// user setting for temperature control ratio
-	INumberVectorProperty *TemperatureControlRatioNV;
+	INumberVectorProperty TemperatureControlRatioNP;
 	INumber TemperatureControlRatioN[1];
 
 };

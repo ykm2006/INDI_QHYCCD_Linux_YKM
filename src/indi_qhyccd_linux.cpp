@@ -142,14 +142,14 @@ QHYCCD::QHYCCD()
 {
     IDLog("%s():\n", __FUNCTION__);
 
-    TemperatureControlRatioNV = new INumberVectorProperty;
+//    TemperatureControlRatioNV = new INumberVectorProperty;
 }
 
 QHYCCD::~QHYCCD()
 {
     IDLog("%s()\n", __FUNCTION__);
 
-    delete TemperatureControlRatioNV;
+//    delete TemperatureControlRatioNV;
 }
 
 /**************************************************************************************
@@ -198,7 +198,7 @@ bool QHYCCD::initProperties()
     // initialize the UI properties
     IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
                  "Ctrl Ratio(degree/180sec)","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
-    IUFillNumberVector(TemperatureControlRatioNV, TemperatureControlRatioN, 1, getDeviceName(),
+    IUFillNumberVector(&TemperatureControlRatioNP, TemperatureControlRatioN, 1, getDeviceName(),
                        "TEMPERATURE_CONTROL_RATIO","Temp Ctrl",
                        "Main Control",IP_RW,60,IPS_IDLE);
 
@@ -219,7 +219,7 @@ void QHYCCD::ISGetProperties(const char *dev)
     if (isConnected()) {
 
         defineNumber(&TemperatureNP);
-        defineNumber(TemperatureControlRatioNV);
+        defineNumber(&TemperatureControlRatioNP);
     }
 
     // Add Debug, Simulator, and Configuration controls
@@ -239,7 +239,7 @@ bool QHYCCD::updateProperties()
 
         // Let's get parameters now from CCD
         defineNumber(&TemperatureNP);
-        defineNumber(TemperatureControlRatioNV);
+        defineNumber(&TemperatureControlRatioNP);
 
         setupParams();
 
@@ -665,7 +665,7 @@ void QHYCCD::TimerHit()
         if (currentCCDTemperature < TemperatureRequest) {
             /* If target temperature is higher, then increase current CCD temperature */
 
-            targettemp = TemperatureWhenControlStarted + 10.0f / 180 * timesince;
+            targettemp = TemperatureWhenControlStarted + TemperatureControlRatioN[0].value / 180 * timesince;
             if (targettemp > TemperatureRequest) {
                 targettemp = TemperatureRequest;
             }
@@ -673,7 +673,7 @@ void QHYCCD::TimerHit()
         } else if (currentCCDTemperature > TemperatureRequest) {
             /* If target temperature is lower, then decrease current CCD temperature */
 
-            targettemp = TemperatureWhenControlStarted - 10.0f / 180 * timesince;
+            targettemp = TemperatureWhenControlStarted - TemperatureControlRatioN[0].value / 180 * timesince;
             if (targettemp < TemperatureRequest) {
                 targettemp = TemperatureRequest;
             }
@@ -769,12 +769,12 @@ bool QHYCCD::ISNewNumber(const char *dev, const char *name, double values[], cha
         //IDLog("CCDSim::ISNewNumber %s\n",name);
         if(strcmp(name,"TEMPERATURE_CONTROL_RATIO")==0)
         {
-            IUUpdateNumber(TemperatureControlRatioNV, values, names, n);
-            TemperatureControlRatioNV->s=IPS_OK;
+            IUUpdateNumber(&TemperatureControlRatioNP, values, names, n);
+            TemperatureControlRatioNP.s=IPS_OK;
 
             //  Reset our parameters now
             setupParams();
-            IDSetNumber(TemperatureControlRatioNV, NULL);
+            IDSetNumber(&TemperatureControlRatioNP, NULL);
             //saveConfig();
 
             //IDLog("Frame set to %4.0f,%4.0f %4.0f x %4.0f\n",CcdFrameN[0].value,CcdFrameN[1].value,CcdFrameN[2].value,CcdFrameN[3].value);
