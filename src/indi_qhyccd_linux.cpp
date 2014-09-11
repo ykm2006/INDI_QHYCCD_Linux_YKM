@@ -197,10 +197,10 @@ bool QHYCCD::initProperties()
 
     // initialize the UI properties
     IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
-                 "Temperature Control Ratio","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
+                 "Ctrl Ratio(degree/180sec)","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
     IUFillNumberVector(TemperatureControlRatioNV, TemperatureControlRatioN, 1, getDeviceName(),
-                       "TEMPERATURE_CONTROL_RATIO","Temperature Control Ratio label",
-                       "Options",IP_RW,60,IPS_IDLE);
+                       "TEMPERATURE_CONTROL_RATIO","Temp Ctrl",
+                       "Main Control",IP_RW,60,IPS_IDLE);
 
     return true;
 
@@ -211,6 +211,8 @@ bool QHYCCD::initProperties()
 ***************************************************************************************/
 void QHYCCD::ISGetProperties(const char *dev)
 {
+    IDLog("%s(%s)\n", __FUNCTION__, dev);
+
     INDI::CCD::ISGetProperties(dev);
 
     // If we are _already_ connected, let's define our temperature property to the client now
@@ -234,8 +236,10 @@ bool QHYCCD::updateProperties()
     INDI::CCD::updateProperties();
 
     if (isConnected()) {
+
         // Let's get parameters now from CCD
         defineNumber(&TemperatureNP);
+        defineNumber(TemperatureControlRatioNV);
 
         setupParams();
 
