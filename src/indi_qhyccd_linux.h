@@ -85,8 +85,8 @@ private:
     bool AbortPrimaryFrame;
 
     // We declare the CCD temperature property
-    INumber TemperatureN[1];
-    INumberVectorProperty TemperatureNP;
+	//    INumber TemperatureN[1];
+	//    INumberVectorProperty TemperatureNP;
 
     // time the new value of temperature is set
     struct timeval TimeTemperatureControlStarted;
