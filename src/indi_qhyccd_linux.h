@@ -95,7 +95,8 @@ private:
     double TemperatureWhenControlStarted;
 
     // camera handle for lzr's QHYCCD_Linux
-    qhyccd_handle *CameraHandle;
+    qhyccd_handle *HandlePrimaryCCD;
+	qhyccd_handle *HandleGuideCCD;
 
 	// user setting for temperature control ratio
 	INumberVectorProperty TemperatureControlRatioNP;

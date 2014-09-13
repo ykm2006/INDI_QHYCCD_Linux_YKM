@@ -139,15 +139,11 @@ void ISSnoopDevice(XMLEle * root)
 QHYCCD::QHYCCD()
 {
     IDLog("%s():\n", __FUNCTION__);
-
-//    TemperatureControlRatioNV = new INumberVectorProperty;
 }
 
 QHYCCD::~QHYCCD()
 {
     IDLog("%s()\n", __FUNCTION__);
-
-//    delete TemperatureControlRatioNV;
 }
 
 /**************************************************************************************
@@ -155,6 +151,8 @@ QHYCCD::~QHYCCD()
 ***************************************************************************************/
 const char *QHYCCD::getDefaultName()
 {
+    IDLog("%s():\n", __FUNCTION__);
+
     return "QHY CCD(QHYCCD_Linux Driver based)";
 }
 
@@ -170,28 +168,6 @@ bool QHYCCD::initProperties()
 
     InExposure = false;
     AbortPrimaryFrame = false;
-
-    // FLI_CCD sets user interface such as ports and reset switches here,
-    // currently we have no such UIs
-
-    // We set the CCD capabilities
-    Capability cap;
-
-    // currently QHYCCD_Linux does not support abort
-    //cap.canAbort = true;
-    cap.canAbort = false;
-    cap.canBin = true;
-    // currently QHYCCD_Linux does not support subframe
-    //cap.canSubFrame = true;
-    cap.canSubFrame = false;
-    cap.hasCooler = true;
-    cap.hasGuideHead = false;
-    // currently QHYCCD_Linux does not support shutter
-    //cap.hasShutter = true;
-    cap.hasShutter = false;
-    cap.hasST4Port = false;
-
-    SetCapability(&cap);
 
     // initialize the UI properties
     IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
@@ -244,6 +220,8 @@ bool QHYCCD::updateProperties()
         // Start the timer
         timerID = SetTimer(POLLMS);
     } else {
+        deleteProperty(TemperatureNP.name);
+        deleteProperty(TemperatureControlRatioNP.name);
         rmTimer(timerID);
     }
 
@@ -258,24 +236,24 @@ bool QHYCCD::Connect()
     IDLog("%s()\n", __FUNCTION__);
     
     // get env variable for camera IDs
-    char *NameMainCCD;
+    char *NamePrimaryCCD;
     char *NameGuideCCD;
     char *NameFromEnv;
 
-    NameFromEnv = getenv("INDIQHY_MAINCCD");
+    NameFromEnv = getenv("INDIQHY_PRIMARYCCD");
     IDLog("NameFromEnv=[%s]\n", NameFromEnv);
 
     if(NameFromEnv == NULL) {
-        NameMainCCD = (char *)"IC8300";
+        NamePrimaryCCD = (char *)"IC8300";
     } else {
-        NameMainCCD = NameFromEnv;
+        NamePrimaryCCD = NameFromEnv;
     }
 
     NameFromEnv = getenv("INDIQHY_GUIDECCD");
     NameGuideCCD = NameFromEnv;
 
-    IDLog("Main CCD  = [%s]\n", NameMainCCD);
-    IDLog("Guide CCD = [%s]\n", NameGuideCCD);
+    IDLog("Primary CCD  = [%s]\n", NamePrimaryCCD);
+    IDLog("Guide CCD    = [%s]\n", NameGuideCCD);
 
     int ret = InitQHYCCDResource();
     if (ret != QHYCCD_SUCCESS) {
@@ -295,9 +273,9 @@ bool QHYCCD::Connect()
 
     IDMessage(getDeviceName(), "  found [%d] QHYCCD Cameras.\n", nCameras);
 
-    char id[0x20]         = {0};
-    char idMainCCD[0x20]  = {0};
-    char idGuideCCD[0x20] = {0};
+    char id[0x20]            = {0};
+    char idPrimaryCCD[0x20]  = {0};
+    char idGuideCCD[0x20]    = {0};
     bool found = false;
 
     for (int i = 0; i < nCameras; i++) {
@@ -311,9 +289,9 @@ bool QHYCCD::Connect()
         IDLog("Found camera with id [%s]\n", id);
         IDMessage(getDeviceName(), "  Found camera with id [%s]\n", id);
 
-        if (strncmp(id, NameMainCCD, strlen(NameMainCCD)) == 0) {
-            IDLog("Found Main CCD [%s]\n", id);
-            strcpy(idMainCCD, id);
+        if (strncmp(id, NamePrimaryCCD, strlen(NamePrimaryCCD)) == 0) {
+            IDLog("Found Primary CCD [%s]\n", id);
+            strcpy(idPrimaryCCD, id);
             found = true;
         }
 
@@ -325,6 +303,8 @@ bool QHYCCD::Connect()
         }
     }
 
+    // initialize Primary CCD
+
     if (!found) {
         IDLog("no cameras found.\n");
         IDMessage(getDeviceName(), "  no cameras found.\n");
@@ -332,36 +312,75 @@ bool QHYCCD::Connect()
         return false;
     }
 
-    IDLog("found camera [%s]\n", idMainCCD);
-    IDMessage(getDeviceName(), "  found camera [%s]\n", idMainCCD);
+    IDLog("found primary camera [%s]\n", idPrimaryCCD);
+    IDMessage(getDeviceName(), "  found primary camera [%s]\n", idPrimaryCCD);
 
-    CameraHandle = OpenQHYCCD(idMainCCD);
-    if (!CameraHandle) {
-        IDLog("Could not open camera with id [%s]\n", idMainCCD);
+    HandlePrimaryCCD = OpenQHYCCD(idPrimaryCCD);
+    if (!HandlePrimaryCCD) {
+        IDLog("Could not open camera with id [%s]\n", idPrimaryCCD);
         IDMessage(getDeviceName(),
-                  "  Could not open camera with id [%s]\n", idMainCCD);
+                  "  Could not open camera with id [%s]\n", idPrimaryCCD);
         ReleaseQHYCCDResource();
         return false;
     }
 
-    IDLog("camera [%s] open successful.", idMainCCD);
-    IDMessage(getDeviceName(), "  camera [%s] open successful.", idMainCCD);
+    IDLog("primary camera [%s] open successful.\n", idPrimaryCCD);
+    IDMessage(getDeviceName(), "  primary camera [%s] open successful.", idPrimaryCCD);
 
-    ret = InitQHYCCD(CameraHandle);
+    ret = InitQHYCCD(HandlePrimaryCCD);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not initialize camera [%d]\n", ret);
         IDMessage(getDeviceName(), "  Could not initialize camera [%d]",
                   ret);
-        CloseQHYCCD(CameraHandle);
+        CloseQHYCCD(HandlePrimaryCCD);
         ReleaseQHYCCDResource();
         return false;
+    }
+
+    // initialize guide CCD if we have
+
+    if(NameGuideCCD) {
+        if(strlen(idGuideCCD) == 0) {
+            IDLog("no guide camera found.\n");
+            IDMessage(getDeviceName(), "  no guide camera found.\n");
+            CloseQHYCCD(HandlePrimaryCCD);
+            ReleaseQHYCCDResource();
+            return false;
+        }
+
+        IDLog("found Guider CCD [%s]\n", idGuideCCD);
+        IDMessage(getDeviceName(), "  found guide camera [%s]\n", idGuideCCD);
+
+        HandleGuideCCD = OpenQHYCCD(idGuideCCD);
+        if(!HandleGuideCCD) {
+            IDLog("Could not open camera with id [%s]\n", idGuideCCD);
+            IDMessage(getDeviceName(),
+                      "  Could not open camera with id [%s]\n", idGuideCCD);
+            CloseQHYCCD(HandlePrimaryCCD);
+            ReleaseQHYCCDResource();
+            return false;
+        }
+
+        IDLog("guide camera [%s] open successful.\n", idGuideCCD);
+        IDMessage(getDeviceName(), "  guide camera [%s] open successful.", idGuideCCD);
+
+        ret = InitQHYCCD(HandleGuideCCD);
+        if (ret != QHYCCD_SUCCESS) {
+            IDLog("Could not initialize camera [%d]\n", ret);
+            IDMessage(getDeviceName(), "  Could not initialize camera [%d]",
+                      ret);
+            CloseQHYCCD(HandlePrimaryCCD);
+            CloseQHYCCD(HandleGuideCCD);
+            ReleaseQHYCCDResource();
+            return false;
+        }
     }
 
     // Try to set gain.  Gain and Offset needs to be set from Client later
 
     double gainMin, gainMax, gainStep;
     ret =
-        GetQHYCCDParamMinMaxStep(CameraHandle, CONTROL_GAIN, &gainMin, &gainMax,
+        GetQHYCCDParamMinMaxStep(HandlePrimaryCCD, CONTROL_GAIN, &gainMin, &gainMax,
                                  &gainStep);
 
     if (ret != QHYCCD_SUCCESS) {
@@ -369,7 +388,7 @@ bool QHYCCD::Connect()
     } else {
         IDLog("Gain settings (%.1f, %.1f, +%.1f), setting to %.1f\n",
               gainMin, gainMax, gainStep, DEFAULT_GAIN);
-        ret = SetQHYCCDParam(CameraHandle, CONTROL_GAIN, DEFAULT_GAIN);
+        ret = SetQHYCCDParam(HandlePrimaryCCD, CONTROL_GAIN, DEFAULT_GAIN);
         if (ret != QHYCCD_SUCCESS) {
             IDLog("Could not set gain to %.1f (%d)!\n", DEFAULT_GAIN, ret);
         }
@@ -377,21 +396,52 @@ bool QHYCCD::Connect()
 
     // Try to set offset
     ret =
-        GetQHYCCDParamMinMaxStep(CameraHandle, CONTROL_OFFSET, &gainMin,
+        GetQHYCCDParamMinMaxStep(HandlePrimaryCCD, CONTROL_OFFSET, &gainMin,
                                  &gainMax, &gainStep);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not get min/max/step for OFFSET (%d)\n", ret);
     } else {
         IDLog("Offset settings (%.1f, %.1f, +%.1f), setting to %.1f\n",
               gainMin, gainMax, gainStep, DEFAULT_OFFSET);
-        ret = SetQHYCCDParam(CameraHandle, CONTROL_OFFSET, DEFAULT_OFFSET);
+        ret = SetQHYCCDParam(HandlePrimaryCCD, CONTROL_OFFSET, DEFAULT_OFFSET);
         if (ret != QHYCCD_SUCCESS) {
             IDLog("Could not set offset to 107.0 (%d)!\n", ret);
         }
     }
 
+    // We set the CCD capabilities.
+    Capability cap;
+
+    // currently QHYCCD_Linux does not support abort
+    //cap.canAbort = true;
+    cap.canAbort = false;
+    cap.canBin = true;
+    // currently QHYCCD_Linux does not support subframe
+    //cap.canSubFrame = true;
+    cap.canSubFrame = false;
+    cap.hasCooler = true;
+
+    // if a guider CCD is connected, we emulate guider head
+    if(NameGuideCCD) {
+        cap.hasGuideHead = true;
+    } else {
+        cap.hasGuideHead = false;
+    }
+
+    // currently QHYCCD_Linux does not support shutter
+    //cap.hasShutter = true;
+    cap.hasShutter = false;
+
+    if(NameGuideCCD) {
+        cap.hasST4Port = true;
+    } else {
+        cap.hasST4Port = false;
+    }
+
+    SetCapability(&cap);
+
     // control speed.  needs to be set from the client later.
-    SetQHYCCDParam(CameraHandle, CONTROL_SPEED, 0);
+    SetQHYCCDParam(HandlePrimaryCCD, CONTROL_SPEED, 0);
 
     IDLog("Camera initialized successfully.\n");
     IDMessage(getDeviceName(), "  Camera initialized successfully.");
@@ -411,8 +461,15 @@ bool QHYCCD::Disconnect()
 {
     IDLog("%s()\n", __FUNCTION__);
 
-    CloseQHYCCD(CameraHandle);
-    CameraHandle = NULL;
+    CloseQHYCCD(HandlePrimaryCCD);
+
+    if(HandleGuideCCD) {
+        CloseQHYCCD(HandleGuideCCD);
+    }
+
+    HandlePrimaryCCD = NULL;
+    HandleGuideCCD   = NULL;
+
     ReleaseQHYCCDResource();
 
     IDMessage(getDeviceName(), "QHYCCD disconnected successfully!");
@@ -432,14 +489,14 @@ void QHYCCD::setupParams()
     double pixelw, pixelh;
     int bpp;
 
-    GetQHYCCDChipInfo(CameraHandle, &chipw, &chiph, &imagew, &imageh, &pixelw,
+    GetQHYCCDChipInfo(HandlePrimaryCCD, &chipw, &chiph, &imagew, &imageh, &pixelw,
                       &pixelh, &bpp);
     SetCCDParams(imagew, imageh, bpp, pixelw, pixelh);
 
-    IDLog("w[%d], h[%d], bpp[%d], pw[%.1f], ph[%.1f]\n", 
+    IDLog("prime: w[%d], h[%d], bpp[%d], pw[%.1f], ph[%.1f]\n", 
           imagew, imageh, bpp, pixelw, pixelh);
 
-    int nbuf = GetQHYCCDMemLength(CameraHandle);
+    int nbuf = GetQHYCCDMemLength(HandlePrimaryCCD);
 
     IDLog("nbuf = [%d]\n", nbuf);
 
@@ -447,7 +504,7 @@ void QHYCCD::setupParams()
 
     ResetTempControl(TemperatureRequest);
 
-    TemperatureN[0].value = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
+    TemperatureN[0].value = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
     TemperatureN[0].min = MIN_CCD_TEMP;
     TemperatureN[0].max = MAX_CCD_TEMP;
     IUUpdateMinMax(&TemperatureNP);
@@ -457,9 +514,25 @@ void QHYCCD::setupParams()
     IDSetNumber(&TemperatureNP, NULL);
 
     // binning
-    SetQHYCCDBinMode(CameraHandle, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
+    SetQHYCCDBinMode(HandlePrimaryCCD, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
 
     minDuration = 0.05;
+
+    if(HasGuideHead()) {
+
+        GetQHYCCDChipInfo(HandleGuideCCD, &chipw, &chiph, &imagew, &imageh, &pixelw,
+                          &pixelh, &bpp);
+        SetGuiderParams(imagew, imageh, bpp, pixelw, pixelh);
+
+        IDLog("guide: w[%d], h[%d], bpp[%d], pw[%.1f], ph[%.1f]\n", 
+              imagew, imageh, bpp, pixelw, pixelh);
+
+        int nbuf = GetQHYCCDMemLength(HandleGuideCCD);
+
+        IDLog("nbuf = [%d]\n", nbuf);
+
+        GuideCCD.setFrameBufferSize(nbuf + 512, true);    // give some extra ends
+    }
 
     return;
 }
@@ -511,10 +584,10 @@ bool QHYCCD::StartExposure(float duration)
 
     if(shutterOpen) {
         IDLog("Setting Shutter Open. Not supported currently.\n");
-        //SetQHYCCDShutter(CameraHandle, SHUTTER_OPEN);
+        //SetQHYCCDShutter(HandlePrimaryCCD, SHUTTER_OPEN);
     } else {
         IDLog("Setting Shutter Closed. Not supported currently.\n");
-        //SetQHYCCDShutter(CameraHandle, SHUTTER_CLOSED);
+        //SetQHYCCDShutter(HandlePrimaryCCD, SHUTTER_CLOSED);
     }
 
     if(durationControl) {
@@ -523,7 +596,7 @@ bool QHYCCD::StartExposure(float duration)
     }
 
     // QHYCCD_Linux exposure is microsecond
-    int ret = SetQHYCCDParam(CameraHandle, CONTROL_EXPOSURE,
+    int ret = SetQHYCCDParam(HandlePrimaryCCD, CONTROL_EXPOSURE,
                              (int) (duration * 1000 * 1000));
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not set exposure time to %d us\n",
@@ -533,7 +606,7 @@ bool QHYCCD::StartExposure(float duration)
 
     IDLog("Set exposure time.. begin exposing.\n");
 
-    ret = ExpQHYCCDSingleFrame(CameraHandle);
+    ret = ExpQHYCCDSingleFrame(HandlePrimaryCCD);
     if (ret != QHYCCD_SUCCESS) {
         IDLog("Could not start exposure [%d]\n", ret);
         return false;
@@ -668,7 +741,7 @@ void QHYCCD::TimerHit()
     float timesince = CalcTimeSince(&TimeTemperatureControlStarted);
     float targettemp;
 
-    currentCCDTemperature = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
+    currentCCDTemperature = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
     IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
 
     switch (TemperatureNP.s) {
@@ -711,11 +784,11 @@ void QHYCCD::TimerHit()
 
         IDLog("timesince:[%.1f], targettemp=[%.1f]\n", timesince, targettemp);
 
-        ControlQHYCCDTemp(CameraHandle, targettemp);
+        ControlQHYCCDTemp(HandlePrimaryCCD, targettemp);
 
         // read current PWM for monitor
 
-        double pwm = GetQHYCCDParam(CameraHandle, CONTROL_CURPWM);
+        double pwm = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURPWM);
         IDLog("current pwm=[%f]\n", pwm);
 
         if (fabs(currentCCDTemperature - TemperatureRequest) <= TEMP_THRESHOLD) {
@@ -746,7 +819,7 @@ void QHYCCD::TimerHit()
 ***************************************************************************************/
 int QHYCCD::ResetTempControl(double targetTemp)
 {
-    double temp = GetQHYCCDParam(CameraHandle, CONTROL_CURTEMP);
+    double temp = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
 
     TemperatureRequest = targetTemp;
     currentCCDTemperature = temp;
@@ -774,7 +847,7 @@ void QHYCCD::grabImage()
 
     int h = 0, w = 0, bpp = 0, ch = 0;
 
-    int ret = GetQHYCCDSingleFrame(CameraHandle, &w, &h, &bpp, &ch, image);
+    int ret = GetQHYCCDSingleFrame(HandlePrimaryCCD, &w, &h, &bpp, &ch, image);
 
     if (ret >= 0) {
         IDLog("Done exposing.\n");
