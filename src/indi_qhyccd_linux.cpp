@@ -1,5 +1,5 @@
 /*
- QHY CCD INDI Driver based on QHYCCD_Linux
+ QHYCCD INDI Driver based on QHYCCD_Linux
 
  Copyright(C) 2014 Yuichi Kawamoto (ykm2006083001 AT gmail DOT com)
  All rights reserved.
@@ -38,8 +38,6 @@
      Got to be not not too bad with 1 second interval
 
    - configure temp control speed
-
-   - xfer speed setting
 
    - guider ccd support
 
@@ -258,6 +256,26 @@ bool QHYCCD::updateProperties()
 bool QHYCCD::Connect()
 {
     IDLog("%s()\n", __FUNCTION__);
+    
+    // get env variable for camera IDs
+    char *NameMainCCD;
+    char *NameGuideCCD;
+    char *NameFromEnv;
+
+    NameFromEnv = getenv("INDIQHY_MAINCCD");
+    IDLog("NameFromEnv=[%s]\n", NameFromEnv);
+
+    if(NameFromEnv == NULL) {
+        NameMainCCD = (char *)"IC8300";
+    } else {
+        NameMainCCD = NameFromEnv;
+    }
+
+    NameFromEnv = getenv("INDIQHY_GUIDECCD");
+    NameGuideCCD = NameFromEnv;
+
+    IDLog("Main CCD  = [%s]\n", NameMainCCD);
+    IDLog("Guide CCD = [%s]\n", NameGuideCCD);
 
     int ret = InitQHYCCDResource();
     if (ret != QHYCCD_SUCCESS) {
@@ -277,8 +295,11 @@ bool QHYCCD::Connect()
 
     IDMessage(getDeviceName(), "  found [%d] QHYCCD Cameras.\n", nCameras);
 
-    char id[0x20] = { 0 };
+    char id[0x20]         = {0};
+    char idMainCCD[0x20]  = {0};
+    char idGuideCCD[0x20] = {0};
     bool found = false;
+
     for (int i = 0; i < nCameras; i++) {
         ret = GetQHYCCDId(i, id);
         if (ret != QHYCCD_SUCCESS) {
@@ -290,9 +311,17 @@ bool QHYCCD::Connect()
         IDLog("Found camera with id [%s]\n", id);
         IDMessage(getDeviceName(), "  Found camera with id [%s]\n", id);
 
-        if (strncmp(id, "IC8300", 6) == 0) {
+        if (strncmp(id, NameMainCCD, strlen(NameMainCCD)) == 0) {
+            IDLog("Found Main CCD [%s]\n", id);
+            strcpy(idMainCCD, id);
             found = true;
-            break;
+        }
+
+        if(NameGuideCCD) {
+            if(strncmp(id, NameGuideCCD, strlen(NameGuideCCD)) == 0) {
+                IDLog("Found Guide CCD [%s]\n", id);
+                strcpy(idGuideCCD, id);
+            }
         }
     }
 
@@ -303,20 +332,20 @@ bool QHYCCD::Connect()
         return false;
     }
 
-    IDLog("found camera [%s]\n", id);
-    IDMessage(getDeviceName(), "  found camera [%s]\n", id);
+    IDLog("found camera [%s]\n", idMainCCD);
+    IDMessage(getDeviceName(), "  found camera [%s]\n", idMainCCD);
 
-    CameraHandle = OpenQHYCCD(id);
+    CameraHandle = OpenQHYCCD(idMainCCD);
     if (!CameraHandle) {
-        IDLog("Could not open camera with id [%s]\n", id);
+        IDLog("Could not open camera with id [%s]\n", idMainCCD);
         IDMessage(getDeviceName(),
-                  "  Could not open camera with id [%s]\n", id);
+                  "  Could not open camera with id [%s]\n", idMainCCD);
         ReleaseQHYCCDResource();
         return false;
     }
 
-    IDLog("camera [%s] open successful.", id);
-    IDMessage(getDeviceName(), "  camera [%s] open successful.", id);
+    IDLog("camera [%s] open successful.", idMainCCD);
+    IDMessage(getDeviceName(), "  camera [%s] open successful.", idMainCCD);
 
     ret = InitQHYCCD(CameraHandle);
     if (ret != QHYCCD_SUCCESS) {
