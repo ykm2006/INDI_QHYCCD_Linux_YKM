@@ -37,6 +37,9 @@ public:
     void ISGetProperties(const char *dev);
 	virtual bool ISNewNumber(const char *dev, const char *name, double values[], char *names[], int n);
 
+	char *GetName() {return name;}
+	void SetName(char* _name) {strcpy(name, _name);}
+
 protected:
     // General device functions
     bool Connect();
@@ -63,6 +66,9 @@ private:
 	int   ResetTempControl(double targetTemp);
 
 	// --- Private Properties ---
+
+	// device name
+	char  name[MAXINDINAME];
 
     // Are we exposing?
     bool InExposure;

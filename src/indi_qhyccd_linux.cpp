@@ -60,6 +60,7 @@
 const int    POLLMS         = 1000;  /* Polling interval 500 ms */
 const int    MAX_CCD_TEMP   = 45;    /* Max CCD temperature */
 const int    MIN_CCD_TEMP   = -55;   /* Min CCD temperature */
+const int    MAX_DEVICES    = 20;    /* Max devices we can open */
 const float  TEMP_THRESHOLD = .25;   /* Differential temperature threshold (C) */
 const double DEFAULT_GAIN   = 14.0;
 const double DEFAULT_OFFSET = 107.0;
@@ -67,28 +68,90 @@ const double DEFAULT_OFFSET = 107.0;
 /* Macro shortcut to CCD temperature value */
 #define currentCCDTemperature   TemperatureN[0].value
 
-/* auto pointer for indi driver */
-std::auto_ptr <QHYCCD> _QHYCCD(0);
+static int cameraCount;
+QHYCCD *cameras[MAX_DEVICES];
 
 /**************************************************************************************
 ** INDI Wrappers
 ***************************************************************************************/
+static void cleanup() {
+    for(int i=0; i<cameraCount; i++) {
+        delete cameras[i];
+    }
+}
+
 void ISInit()
 {
-    static int isInit = 0;
+    static bool isInit = false;
 
-    if (isInit == 1)
+    if(isInit) {
         return;
+    }
 
-    isInit = 1;
-    if (_QHYCCD.get() == 0)
-        _QHYCCD.reset(new QHYCCD());
+    // let's just create one camera for now.
+    // multiple device support
+    int ret = InitQHYCCDResource();
+
+    if (ret == QHYCCD_SUCCESS) {
+
+        IDLog("InitQHYCCDResource() success.\n");
+        
+        // lets count number of cameras
+        cameraCount = ScanQHYCCD();
+        if (cameraCount > 0) {
+
+            IDLog("found [%d] QHYCCD Cameras.\n", cameraCount);
+
+            char id[0x20] = {0};
+            bool failed = false;
+
+            for (int i = 0; i < cameraCount; i++) {
+                cameras[i] = new QHYCCD();
+                QHYCCD* camera = cameras[i];
+
+                ret = GetQHYCCDId(i, id);
+                if (ret == QHYCCD_SUCCESS) {
+                    IDLog("Found camera with id [%s]\n", id);
+
+                    id[strlen(id) - 17] = '\0';
+
+                    camera->SetName(id);
+
+                } else {
+                    IDLog("Could not get CCD id for index[%d]\n", i);
+                    failed = true;
+                    break;
+                }
+            }
+            if(!failed) {
+                ReleaseQHYCCDResource();
+                atexit(cleanup);
+                isInit = true;
+                return;
+            }
+        } else {
+            IDLog("Could not find a device [%d]\n", cameraCount);
+            ReleaseQHYCCDResource();
+        }
+    } else {
+        IDLog("InitQHYCCDResource() failed.\n");
+    }
+    return;
 }
 
 void ISGetProperties(const char *dev)
 {
     ISInit();
-    _QHYCCD->ISGetProperties(dev);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        if(dev==NULL || !strcmp(dev, camera->GetName())) {
+            camera->ISGetProperties(dev);
+            if(dev != NULL) {
+                break;
+            }
+        }
+    }
 }
 
 void
@@ -96,7 +159,16 @@ ISNewSwitch(const char *dev, const char *name, ISState * states,
             char *names[], int num)
 {
     ISInit();
-    _QHYCCD->ISNewSwitch(dev, name, states, names, num);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        if(dev==NULL || !strcmp(dev, camera->GetName())) {
+            camera->ISNewSwitch(dev, name, states, names, num);
+            if(dev != NULL) {
+                break;
+            }
+        }
+    }
 }
 
 void
@@ -104,7 +176,16 @@ ISNewText(const char *dev, const char *name, char *texts[], char *names[],
           int num)
 {
     ISInit();
-    _QHYCCD->ISNewText(dev, name, texts, names, num);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        if(dev==NULL || !strcmp(dev, camera->GetName())) {
+            camera->ISNewText(dev, name, texts, names, num);
+            if(dev != NULL) {
+                break;
+            }
+        }
+    }
 }
 
 void
@@ -112,7 +193,16 @@ ISNewNumber(const char *dev, const char *name, double values[],
             char *names[], int num)
 {
     ISInit();
-    _QHYCCD->ISNewNumber(dev, name, values, names, num);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        if(dev==NULL || !strcmp(dev, camera->GetName())) {
+            camera->ISNewNumber(dev, name, values, names, num);
+            if(dev != NULL) {
+                break;
+            }
+        }
+    }
 }
 
 void
@@ -123,14 +213,26 @@ ISNewBLOB(const char *dev,
           char *blobs[], char *formats[], char *names[], int n)
 {
     ISInit();
-    _QHYCCD->ISNewBLOB(dev, name, sizes, blobsizes, blobs, formats, names,
-                       n);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        if(dev==NULL || !strcmp(dev, camera->GetName())) {
+            camera->ISNewBLOB(dev, name, sizes, blobsizes, blobs, formats, names, n);
+            if(dev != NULL) {
+                break;
+            }
+        }
+    }
 }
 
 void ISSnoopDevice(XMLEle * root)
 {
     ISInit();
-    _QHYCCD->ISSnoopDevice(root);
+
+    for(int i=0; i<cameraCount; i++) {
+        QHYCCD *camera = cameras[i];
+        camera->ISSnoopDevice(root);
+    }
 }
 
 /**************************************************************************************
@@ -139,6 +241,15 @@ void ISSnoopDevice(XMLEle * root)
 QHYCCD::QHYCCD()
 {
     IDLog("%s():\n", __FUNCTION__);
+
+    // for now, let's set name to default name.
+    if(*getDeviceName() == '\0') {
+        strncpy(name, getDefaultName(), MAXINDINAME);
+    } else {
+        strncpy(name, getDeviceName(), MAXINDINAME);
+    }
+
+    setVersion(0, 1);
 }
 
 QHYCCD::~QHYCCD()
@@ -153,7 +264,8 @@ const char *QHYCCD::getDefaultName()
 {
     IDLog("%s():\n", __FUNCTION__);
 
-    return "QHY CCD(QHYCCD_Linux Driver based)";
+    return GetName();
+//    return "QHYCCD(multi device test)";
 }
 
 /**************************************************************************************
@@ -170,11 +282,16 @@ bool QHYCCD::initProperties()
     AbortPrimaryFrame = false;
 
     // initialize the UI properties
-    IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
-                 "Ctrl Ratio(degree/180sec)","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
-    IUFillNumberVector(&TemperatureControlRatioNP, TemperatureControlRatioN, 1, getDeviceName(),
-                       "TEMPERATURE_CONTROL_RATIO","Temp Ctrl",
-                       "Main Control",IP_RW,60,IPS_IDLE);
+    if(strncmp(GetName(), "QHY5", 4) != 0) {
+        IDLog("cool camera.\n");
+        IUFillNumber(&TemperatureControlRatioN[0], "TMP_CTRL_RATIO",
+                     "Ctrl Ratio(degree/180sec)","%2.2f", 1.0f, 50.0f, 0.0f, 10.0f);
+        IUFillNumberVector(&TemperatureControlRatioNP, TemperatureControlRatioN, 1, getDeviceName(),
+                           "TEMPERATURE_CONTROL_RATIO","Temp Ctrl",
+                           "Main Control",IP_RW,60,IPS_IDLE);
+    } else {
+        IDLog("non-cool camera.\n");
+    }
 
     return true;
 
@@ -235,26 +352,6 @@ bool QHYCCD::Connect()
 {
     IDLog("%s()\n", __FUNCTION__);
     
-    // get env variable for camera IDs
-    char *NamePrimaryCCD;
-    char *NameGuideCCD;
-    char *NameFromEnv;
-
-    NameFromEnv = getenv("INDIQHY_PRIMARYCCD");
-    IDLog("NameFromEnv=[%s]\n", NameFromEnv);
-
-    if(NameFromEnv == NULL) {
-        NamePrimaryCCD = (char *)"IC8300";
-    } else {
-        NamePrimaryCCD = NameFromEnv;
-    }
-
-    NameFromEnv = getenv("INDIQHY_GUIDECCD");
-    NameGuideCCD = NameFromEnv;
-
-    IDLog("Primary CCD  = [%s]\n", NamePrimaryCCD);
-    IDLog("Guide CCD    = [%s]\n", NameGuideCCD);
-
     int ret = InitQHYCCDResource();
     if (ret != QHYCCD_SUCCESS) {
         IDLog("InitQHYCCDResource() failed.\n");
@@ -275,7 +372,6 @@ bool QHYCCD::Connect()
 
     char id[0x20]            = {0};
     char idPrimaryCCD[0x20]  = {0};
-    char idGuideCCD[0x20]    = {0};
     bool found = false;
 
     for (int i = 0; i < nCameras; i++) {
@@ -289,17 +385,10 @@ bool QHYCCD::Connect()
         IDLog("Found camera with id [%s]\n", id);
         IDMessage(getDeviceName(), "  Found camera with id [%s]\n", id);
 
-        if (strncmp(id, NamePrimaryCCD, strlen(NamePrimaryCCD)) == 0) {
+        if (strncmp(id, GetName(), strlen(GetName())) == 0) {
             IDLog("Found Primary CCD [%s]\n", id);
             strcpy(idPrimaryCCD, id);
             found = true;
-        }
-
-        if(NameGuideCCD) {
-            if(strncmp(id, NameGuideCCD, strlen(NameGuideCCD)) == 0) {
-                IDLog("Found Guide CCD [%s]\n", id);
-                strcpy(idGuideCCD, id);
-            }
         }
     }
 
@@ -335,45 +424,6 @@ bool QHYCCD::Connect()
         CloseQHYCCD(HandlePrimaryCCD);
         ReleaseQHYCCDResource();
         return false;
-    }
-
-    // initialize guide CCD if we have
-
-    if(NameGuideCCD) {
-        if(strlen(idGuideCCD) == 0) {
-            IDLog("no guide camera found.\n");
-            IDMessage(getDeviceName(), "  no guide camera found.\n");
-            CloseQHYCCD(HandlePrimaryCCD);
-            ReleaseQHYCCDResource();
-            return false;
-        }
-
-        IDLog("found Guider CCD [%s]\n", idGuideCCD);
-        IDMessage(getDeviceName(), "  found guide camera [%s]\n", idGuideCCD);
-
-        HandleGuideCCD = OpenQHYCCD(idGuideCCD);
-        if(!HandleGuideCCD) {
-            IDLog("Could not open camera with id [%s]\n", idGuideCCD);
-            IDMessage(getDeviceName(),
-                      "  Could not open camera with id [%s]\n", idGuideCCD);
-            CloseQHYCCD(HandlePrimaryCCD);
-            ReleaseQHYCCDResource();
-            return false;
-        }
-
-        IDLog("guide camera [%s] open successful.\n", idGuideCCD);
-        IDMessage(getDeviceName(), "  guide camera [%s] open successful.", idGuideCCD);
-
-        ret = InitQHYCCD(HandleGuideCCD);
-        if (ret != QHYCCD_SUCCESS) {
-            IDLog("Could not initialize camera [%d]\n", ret);
-            IDMessage(getDeviceName(), "  Could not initialize camera [%d]",
-                      ret);
-            CloseQHYCCD(HandlePrimaryCCD);
-            CloseQHYCCD(HandleGuideCCD);
-            ReleaseQHYCCDResource();
-            return false;
-        }
     }
 
     // Try to set gain.  Gain and Offset needs to be set from Client later
@@ -419,20 +469,23 @@ bool QHYCCD::Connect()
     // currently QHYCCD_Linux does not support subframe
     //cap.canSubFrame = true;
     cap.canSubFrame = false;
-    cap.hasCooler = true;
 
-    // if a guider CCD is connected, we emulate guider head
-    if(NameGuideCCD) {
-        cap.hasGuideHead = true;
+    if(IsQHYCCDCool(HandlePrimaryCCD)) {
+        cap.hasCooler = true;
     } else {
-        cap.hasGuideHead = false;
+        cap.hasCooler = false;
     }
+
+    // currently all QHYCCD does not have guider head
+    cap.hasGuideHead = false;
 
     // currently QHYCCD_Linux does not support shutter
     //cap.hasShutter = true;
     cap.hasShutter = false;
 
-    if(NameGuideCCD) {
+    // QHYCCD_Linux does not have detection for guider port
+    // then lets assume only QHY5 series has the port
+    if(strncpy(GetName(), "QHY5", 4) == 0) {
         cap.hasST4Port = true;
     } else {
         cap.hasST4Port = false;
@@ -463,12 +516,7 @@ bool QHYCCD::Disconnect()
 
     CloseQHYCCD(HandlePrimaryCCD);
 
-    if(HandleGuideCCD) {
-        CloseQHYCCD(HandleGuideCCD);
-    }
-
     HandlePrimaryCCD = NULL;
-    HandleGuideCCD   = NULL;
 
     ReleaseQHYCCDResource();
 
@@ -502,37 +550,23 @@ void QHYCCD::setupParams()
 
     PrimaryCCD.setFrameBufferSize(nbuf + 512, true);    // give some extra ends
 
-    ResetTempControl(TemperatureRequest);
+    if(IsQHYCCDCool(HandlePrimaryCCD)) {
+        ResetTempControl(TemperatureRequest);
 
-    TemperatureN[0].value = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
-    TemperatureN[0].min = MIN_CCD_TEMP;
-    TemperatureN[0].max = MAX_CCD_TEMP;
-    IUUpdateMinMax(&TemperatureNP);
-    IDSetNumber(&TemperatureNP, NULL);
+        TemperatureN[0].value = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
+        TemperatureN[0].min = MIN_CCD_TEMP;
+        TemperatureN[0].max = MAX_CCD_TEMP;
+        IUUpdateMinMax(&TemperatureNP);
+        IDSetNumber(&TemperatureNP, NULL);
 
-    TemperatureNP.s = IPS_BUSY;
-    IDSetNumber(&TemperatureNP, NULL);
+        TemperatureNP.s = IPS_BUSY;
+        IDSetNumber(&TemperatureNP, NULL);
 
+    }
     // binning
     SetQHYCCDBinMode(HandlePrimaryCCD, PrimaryCCD.getBinX(), PrimaryCCD.getBinY());
 
     minDuration = 0.05;
-
-    if(HasGuideHead()) {
-
-        GetQHYCCDChipInfo(HandleGuideCCD, &chipw, &chiph, &imagew, &imageh, &pixelw,
-                          &pixelh, &bpp);
-        SetGuiderParams(imagew, imageh, bpp, pixelw, pixelh);
-
-        IDLog("guide: w[%d], h[%d], bpp[%d], pw[%.1f], ph[%.1f]\n", 
-              imagew, imageh, bpp, pixelw, pixelh);
-
-        int nbuf = GetQHYCCDMemLength(HandleGuideCCD);
-
-        IDLog("nbuf = [%d]\n", nbuf);
-
-        GuideCCD.setFrameBufferSize(nbuf + 512, true);    // give some extra ends
-    }
 
     return;
 }
@@ -542,9 +576,13 @@ void QHYCCD::setupParams()
 ***************************************************************************************/
 int QHYCCD::SetTemperature(double temperature)
 {
-    IDLog("%s(%f):\n", __FUNCTION__, temperature);
-    TemperatureRequest = temperature;
-    return ResetTempControl(temperature);
+    if(IsQHYCCDCool(HandlePrimaryCCD)) {
+        IDLog("%s(%f):\n", __FUNCTION__, temperature);
+        TemperatureRequest = temperature;
+        return ResetTempControl(temperature);
+    } else {
+        return 1;
+    }
 }
 
 /**************************************************************************************
@@ -615,8 +653,6 @@ bool QHYCCD::StartExposure(float duration)
     ExposureRequest = duration;
 
     // Since we have only one CCD with one chip, we set the exposure duration of the primary CCD
-    // in case of IC8300, it may have guider CCD at its USB port then can be considered as 
-    // a built-in guider chip..   will be considered later
     PrimaryCCD.setExposureDuration(duration);
 
     gettimeofday(&ExpStart, NULL);
@@ -737,75 +773,78 @@ void QHYCCD::TimerHit()
             }
         }
     }
-    // TemperatureNP is defined in INDI::CCD
-    float timesince = CalcTimeSince(&TimeTemperatureControlStarted);
-    float targettemp;
 
-    currentCCDTemperature = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
-    IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
+    if(IsQHYCCDCool(HandlePrimaryCCD)) {
+        // TemperatureNP is defined in INDI::CCD
+        float timesince = CalcTimeSince(&TimeTemperatureControlStarted);
+        float targettemp;
 
-    switch (TemperatureNP.s) {
-    case IPS_IDLE:
-    case IPS_OK:
-        if (fabs(currentCCDTemperature - TemperatureRequest) > TEMP_THRESHOLD) {
+        currentCCDTemperature = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURTEMP);
+        IDLog("Current temp: %.1f   Target temp: %.1f\n", currentCCDTemperature, TemperatureRequest);
+        
+        switch (TemperatureNP.s) {
+        case IPS_IDLE:
+        case IPS_OK:
+            if (fabs(currentCCDTemperature - TemperatureRequest) > TEMP_THRESHOLD) {
+                
+                IDLog("kicked the threshold, start controlling.\n");
 
-            IDLog("kicked the threshold, start controlling.\n");
+                // begin control
+                TemperatureNP.s = IPS_BUSY;
+                IDSetNumber(&TemperatureNP, NULL);
 
-            // begin control
-            TemperatureNP.s = IPS_BUSY;
+                ResetTempControl(TemperatureRequest);
+
+                break;
+            }
+            break;
+
+        case IPS_BUSY:
+        {
+
+            if (currentCCDTemperature < TemperatureRequest) {
+                /* If target temperature is higher, then increase current CCD temperature */
+
+                targettemp = TemperatureWhenControlStarted + TemperatureControlRatioN[0].value / 180 * timesince;
+                if (targettemp > TemperatureRequest) {
+                    targettemp = TemperatureRequest;
+                }
+
+            } else if (currentCCDTemperature > TemperatureRequest) {
+                /* If target temperature is lower, then decrease current CCD temperature */
+
+                targettemp = TemperatureWhenControlStarted - TemperatureControlRatioN[0].value / 180 * timesince;
+                if (targettemp < TemperatureRequest) {
+                    targettemp = TemperatureRequest;
+                }
+
+            }
+
+            IDLog("timesince:[%.1f], targettemp=[%.1f]\n", timesince, targettemp);
+
+            ControlQHYCCDTemp(HandlePrimaryCCD, targettemp);
+            
+            // read current PWM for monitor
+
+            double pwm = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURPWM);
+            IDLog("current pwm=[%f]\n", pwm);
+
+            if (fabs(currentCCDTemperature - TemperatureRequest) <= TEMP_THRESHOLD) {
+                
+                IDLog("reached at target temperature, go to IDLE state\n");
+
+                TemperatureNP.s = IPS_OK;
+            }
+
             IDSetNumber(&TemperatureNP, NULL);
-
-            ResetTempControl(TemperatureRequest);
-
             break;
         }
-        break;
 
-    case IPS_BUSY:
-    {
-
-        if (currentCCDTemperature < TemperatureRequest) {
-            /* If target temperature is higher, then increase current CCD temperature */
-
-            targettemp = TemperatureWhenControlStarted + TemperatureControlRatioN[0].value / 180 * timesince;
-            if (targettemp > TemperatureRequest) {
-                targettemp = TemperatureRequest;
-            }
-
-        } else if (currentCCDTemperature > TemperatureRequest) {
-            /* If target temperature is lower, then decrease current CCD temperature */
-
-            targettemp = TemperatureWhenControlStarted - TemperatureControlRatioN[0].value / 180 * timesince;
-            if (targettemp < TemperatureRequest) {
-                targettemp = TemperatureRequest;
-            }
-
+        case IPS_ALERT:
+            break;
+        default:
+            break;
         }
-
-        IDLog("timesince:[%.1f], targettemp=[%.1f]\n", timesince, targettemp);
-
-        ControlQHYCCDTemp(HandlePrimaryCCD, targettemp);
-
-        // read current PWM for monitor
-
-        double pwm = GetQHYCCDParam(HandlePrimaryCCD, CONTROL_CURPWM);
-        IDLog("current pwm=[%f]\n", pwm);
-
-        if (fabs(currentCCDTemperature - TemperatureRequest) <= TEMP_THRESHOLD) {
-
-            IDLog("reached at target temperature, go to IDLE state\n");
-
-            TemperatureNP.s = IPS_OK;
-        }
-
-        IDSetNumber(&TemperatureNP, NULL);
-        break;
-    }
-
-    case IPS_ALERT:
-        break;
-    default:
-        break;
     }
 
     //IDLog("nexttimer=[%d]\n", nexttimer);
