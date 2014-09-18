@@ -40,6 +40,10 @@ public:
 	char *GetName() {return name;}
 	void SetName(char* _name) {strcpy(name, _name);}
 
+	qhyccd_handle *GetHandlePrimaryCCD() {return HandlePrimaryCCD;}
+	void SetHandlePrimaryCCD(qhyccd_handle *_h) {HandlePrimaryCCD = _h;}
+	//__declspec(property(get = GetHandlePrimaryCCD, put = SetHandlePrimaryCCD)) QHYCCD* handlePrimaryCCD;
+
 protected:
     // General device functions
     bool Connect();
